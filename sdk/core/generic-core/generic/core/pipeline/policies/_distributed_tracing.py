@@ -32,7 +32,6 @@ from types import TracebackType
 
 from .. import PipelineRequest, PipelineResponse
 from ..policies import SansIOHTTPPolicy
-from ..transport import HttpResponse as LegacyHttpResponse, HttpRequest as LegacyHttpRequest
 from ...rest import HttpResponse, HttpRequest
 from ...settings import settings
 from ...tracing import SpanKind
@@ -42,8 +41,8 @@ if TYPE_CHECKING:
         AbstractSpan,
     )
 
-HTTPResponseType = TypeVar("HTTPResponseType", HttpResponse, LegacyHttpResponse)
-HTTPRequestType = TypeVar("HTTPRequestType", HttpRequest, LegacyHttpRequest)
+HTTPResponseType = TypeVar("HTTPResponseType", bound=HttpResponse)
+HTTPRequestType = TypeVar("HTTPRequestType", bound=HttpRequest)
 ExcInfo = Tuple[Type[BaseException], BaseException, TracebackType]
 OptExcInfo = Union[ExcInfo, Tuple[None, None, None]]
 
@@ -54,7 +53,7 @@ def _default_network_span_namer(http_request: HTTPRequestType) -> str:
     """Extract the path to be used as network span name.
 
     :param http_request: The HTTP request
-    :type http_request: ~generic.core.pipeline.transport.HttpRequest
+    :type http_request: ~generic.core.rest.HttpRequest
     :returns: The string to use as network span name
     :rtype: str
     """
@@ -68,14 +67,14 @@ class DistributedTracingPolicy(SansIOHTTPPolicy[HTTPRequestType, HTTPResponseTyp
     """The policy to create spans for service calls.
 
     :keyword network_span_namer: A callable to customize the span name
-    :type network_span_namer: callable[[~generic.core.pipeline.transport.HttpRequest], str]
+    :type network_span_namer: callable[[~generic.core.rest.HttpRequest], str]
     :keyword tracing_attributes: Attributes to set on all created spans
     :type tracing_attributes: dict[str, str]
     """
 
     TRACING_CONTEXT = "TRACING_CONTEXT"
-    _REQUEST_ID = "x-ms-client-request-id"
-    _RESPONSE_ID = "x-ms-request-id"
+    _REQUEST_ID = "x-client-request-id"
+    _RESPONSE_ID = "x-request-id"
 
     def __init__(self, **kwargs: Any):
         self._network_span_namer = kwargs.get("network_span_namer", _default_network_span_namer)
@@ -114,7 +113,7 @@ class DistributedTracingPolicy(SansIOHTTPPolicy[HTTPRequestType, HTTPResponseTyp
         :param request: The PipelineRequest object
         :type request: ~generic.core.pipeline.PipelineRequest
         :param response: The HttpResponse object
-        :type response: ~generic.core.rest.HTTPResponse or ~generic.core.pipeline.transport.HttpResponse
+        :type response: ~generic.core.rest.HTTPResponse or ~generic.core.rest.HttpResponse
         :param exc_info: The exception information
         :type exc_info: tuple
         """
@@ -122,7 +121,7 @@ class DistributedTracingPolicy(SansIOHTTPPolicy[HTTPRequestType, HTTPResponseTyp
             return
 
         span: "AbstractSpan" = request.context[self.TRACING_CONTEXT]
-        http_request: Union[HttpRequest, LegacyHttpRequest] = request.http_request
+        http_request: HttpRequest = request.http_request
         if span is not None:
             span.set_http_attributes(http_request, response=response)
             request_id = http_request.headers.get(self._REQUEST_ID)

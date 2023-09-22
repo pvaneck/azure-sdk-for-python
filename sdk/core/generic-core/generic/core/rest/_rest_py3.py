@@ -46,10 +46,10 @@ from ._helpers import (
     set_json_body,
     set_multipart_body,
     set_urlencoded_body,
-    _format_parameters_helper,
     HttpRequestBackcompatMixin,
     set_content_body,
 )
+from ..utils._pipeline_transport_rest_shared import _format_parameters_helper
 
 ContentType = Union[str, bytes, Iterable[bytes], AsyncIterable[bytes]]
 

@@ -24,11 +24,11 @@
 #
 # --------------------------------------------------------------------------
 from __future__ import annotations
-from typing import TYPE_CHECKING, Union, Callable, TypeVar, Dict
-from typing_extensions import TypeGuard, ParamSpec
+from typing import TYPE_CHECKING, Callable, TypeVar, Dict
+from typing_extensions import ParamSpec
 
 if TYPE_CHECKING:
-    from ..rest import HttpResponse, HttpRequest, AsyncHttpResponse
+    from ..rest import HttpResponse
 
 
 P = ParamSpec("P")
@@ -50,22 +50,6 @@ def await_result(func: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
     if hasattr(result, "__await__"):
         raise TypeError("Policy {} returned awaitable object in non-async pipeline.".format(func))
     return result
-
-
-def is_rest(obj: object) -> TypeGuard[Union[HttpRequest, HttpResponse, AsyncHttpResponse]]:
-    """Return whether a request or a response is a rest request / response.
-
-    Checking whether the response has the object content can sometimes result
-    in a ResponseNotRead error if you're checking the value on a response
-    that has not been read in yet. To get around this, we also have added
-    a check for is_stream_consumed, which is an exclusive property on our new responses.
-
-    :param obj: The object to check.
-    :type obj: any
-    :rtype: bool
-    :return: Whether the object is a rest request / response.
-    """
-    return hasattr(obj, "is_stream_consumed") or hasattr(obj, "content")
 
 
 def handle_non_stream_rest_response(response: HttpResponse) -> None:

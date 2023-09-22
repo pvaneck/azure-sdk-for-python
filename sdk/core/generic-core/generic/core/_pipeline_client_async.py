@@ -44,7 +44,6 @@ from .pipeline.transport._base import PipelineClientBase
 from .pipeline.policies import (
     ContentDecodePolicy,
     DistributedTracingPolicy,
-    HttpLoggingPolicy,
     RequestIdPolicy,
     AsyncRetryPolicy,
     SensitiveHeaderCleanupPolicy,
@@ -223,7 +222,6 @@ class AsyncPipelineClient(
                     config.logging_policy,
                     DistributedTracingPolicy(**kwargs),
                     SensitiveHeaderCleanupPolicy(**kwargs) if config.redirect_policy else None,
-                    config.http_logging_policy or HttpLoggingPolicy(**kwargs),
                 ]
             )
         else:

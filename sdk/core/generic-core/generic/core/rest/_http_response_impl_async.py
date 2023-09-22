@@ -25,38 +25,12 @@
 # --------------------------------------------------------------------------
 from typing import Any, AsyncIterator, Optional, Type
 from types import TracebackType
+
 from ._rest_py3 import AsyncHttpResponse as _AsyncHttpResponse
-from ._http_response_impl import (
-    _HttpResponseBaseImpl,
-    _HttpResponseBackcompatMixinBase,
-    _RestHttpClientTransportResponseBase,
-)
-from ..utils._pipeline_transport_rest_shared import _pad_attr_name
-from ..utils._pipeline_transport_rest_shared_async import _PartGenerator
+from ._http_response_impl import _HttpResponseBaseImpl, _RestHttpClientTransportResponseBase
 
 
-class AsyncHttpResponseBackcompatMixin(_HttpResponseBackcompatMixinBase):
-    """Backcompat mixin for async responses"""
-
-    def __getattr__(self, attr):
-        backcompat_attrs = ["parts"]
-        attr = _pad_attr_name(attr, backcompat_attrs)
-        return super().__getattr__(attr)
-
-    def parts(self):
-        """DEPRECATED: Assuming the content-type is multipart/mixed, will return the parts as an async iterator.
-        This is deprecated and will be removed in a later release.
-        :rtype: AsyncIterator
-        :return: The parts of the response
-        :raises ValueError: If the content is not multipart/mixed
-        """
-        if not self.content_type or not self.content_type.startswith("multipart/mixed"):
-            raise ValueError("You can't get parts if the response is not multipart/mixed")
-
-        return _PartGenerator(self, default_http_response_type=RestAsyncHttpClientTransportResponse)
-
-
-class AsyncHttpResponseImpl(_HttpResponseBaseImpl, _AsyncHttpResponse, AsyncHttpResponseBackcompatMixin):
+class AsyncHttpResponseImpl(_HttpResponseBaseImpl, _AsyncHttpResponse):
     """AsyncHttpResponseImpl built on top of our HttpResponse protocol class.
 
     Since ~generic.core.rest.AsyncHttpResponse is an abstract base class, we need to

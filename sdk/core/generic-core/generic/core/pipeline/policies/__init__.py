@@ -38,7 +38,6 @@ from ._universal import (
     NetworkTraceLoggingPolicy,
     ContentDecodePolicy,
     ProxyPolicy,
-    HttpLoggingPolicy,
     RequestIdPolicy,
 )
 from ._base_async import AsyncHTTPPolicy
@@ -62,7 +61,6 @@ __all__ = [
     "ProxyPolicy",
     "DistributedTracingPolicy",
     "RequestHistory",
-    "HttpLoggingPolicy",
     "RequestIdPolicy",
     "AsyncHTTPPolicy",
     "AsyncBearerTokenCredentialPolicy",

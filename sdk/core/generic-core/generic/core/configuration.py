@@ -53,7 +53,6 @@ class Configuration(Generic[HTTPRequestType, HTTPResponseType]):  # pylint: disa
     :ivar redirect_policy: Provides configuration parameters for redirects.
     :ivar retry_policy: Provides configuration parameters for retries in the pipeline.
     :ivar logging_policy: Provides configuration parameters for logging.
-    :ivar http_logging_policy: Provides configuration parameters for HTTP specific logging.
     :ivar user_agent_policy: Provides configuration parameters to append custom values to the
      User-Agent header.
     :ivar authentication_policy: Provides configuration parameters for adding a bearer token Authorization
@@ -85,9 +84,6 @@ class Configuration(Generic[HTTPRequestType, HTTPResponseType]):  # pylint: disa
 
         # Logger configuration
         self.logging_policy: Optional[AnyPolicy[HTTPRequestType, HTTPResponseType]] = None
-
-        # Http logger configuration
-        self.http_logging_policy: Optional[AnyPolicy[HTTPRequestType, HTTPResponseType]] = None
 
         # User Agent configuration
         self.user_agent_policy: Optional[AnyPolicy[HTTPRequestType, HTTPResponseType]] = None

@@ -25,7 +25,7 @@
 # --------------------------------------------------------------------------
 from json import loads
 from typing import Any, Optional, Iterator, MutableMapping, Callable
-from http.client import HTTPResponse as _HTTPResponse
+
 from ._helpers import (
     get_charset_encoding,
     decode_to_text,
@@ -42,136 +42,9 @@ from ._rest_py3 import (
     HttpRequest as _HttpRequest,
 )
 from ..utils._utils import case_insensitive_dict
-from ..utils._pipeline_transport_rest_shared import (
-    _pad_attr_name,
-    BytesIOSocket,
-    _decode_parts_helper,
-    _get_raw_parts_helper,
-    _parts_helper,
-)
 
 
-class _HttpResponseBackcompatMixinBase:
-    """Base Backcompat mixin for responses.
-
-    This mixin is used by both sync and async HttpResponse
-    backcompat mixins.
-    """
-
-    def __getattr__(self, attr):
-        backcompat_attrs = [
-            "body",
-            "internal_response",
-            "block_size",
-            "stream_download",
-        ]
-        attr = _pad_attr_name(attr, backcompat_attrs)
-        return self.__getattribute__(attr)
-
-    def __setattr__(self, attr, value):
-        backcompat_attrs = [
-            "block_size",
-            "internal_response",
-            "request",
-            "status_code",
-            "headers",
-            "reason",
-            "content_type",
-            "stream_download",
-        ]
-        attr = _pad_attr_name(attr, backcompat_attrs)
-        super(_HttpResponseBackcompatMixinBase, self).__setattr__(attr, value)
-
-    def _body(self):
-        """DEPRECATED: Get the response body.
-        This is deprecated and will be removed in a later release.
-        You should get it through the `content` property instead
-
-        :return: The response body.
-        :rtype: bytes
-        """
-        self.read()
-        return self.content  # pylint: disable=no-member
-
-    def _decode_parts(self, message, http_response_type, requests):
-        """Helper for _decode_parts.
-
-        Rebuild an HTTP response from pure string.
-
-        :param message: The body as an email.Message type
-        :type message: ~email.message.Message
-        :param http_response_type: The type of response to build
-        :type http_response_type: type
-        :param requests: A list of requests to process
-        :type requests: list[~generic.core.rest.HttpRequest]
-        :return: A list of responses
-        :rtype: list[~generic.core.rest.HttpResponse]
-        """
-
-        def _deserialize_response(http_response_as_bytes, http_request, http_response_type):
-            local_socket = BytesIOSocket(http_response_as_bytes)
-            response = _HTTPResponse(local_socket, method=http_request.method)
-            response.begin()
-            return http_response_type(request=http_request, internal_response=response)
-
-        return _decode_parts_helper(
-            self,
-            message,
-            http_response_type or RestHttpClientTransportResponse,
-            requests,
-            _deserialize_response,
-        )
-
-    def _get_raw_parts(self, http_response_type=None):
-        """Helper for get_raw_parts
-
-        Assuming this body is multipart, return the iterator or parts.
-
-        If parts are application/http use http_response_type or HttpClientTransportResponse
-        as envelope.
-
-        :param http_response_type: The type of response to build
-        :type http_response_type: type
-        :return: An iterator of responses
-        :rtype: Iterator[~generic.core.rest.HttpResponse]
-        """
-        return _get_raw_parts_helper(self, http_response_type or RestHttpClientTransportResponse)
-
-    def _stream_download(self, pipeline, **kwargs):
-        """DEPRECATED: Generator for streaming request body data.
-        This is deprecated and will be removed in a later release.
-        You should use `iter_bytes` or `iter_raw` instead.
-
-        :param pipeline: The pipeline object
-        :type pipeline: ~generic.core.pipeline.Pipeline
-        :return: An iterator for streaming request body data.
-        :rtype: iterator[bytes]
-        """
-        return self._stream_download_generator(pipeline, self, **kwargs)
-
-
-class HttpResponseBackcompatMixin(_HttpResponseBackcompatMixinBase):
-    """Backcompat mixin for sync HttpResponses"""
-
-    def __getattr__(self, attr):
-        backcompat_attrs = ["parts"]
-        attr = _pad_attr_name(attr, backcompat_attrs)
-        return super(HttpResponseBackcompatMixin, self).__getattr__(attr)
-
-    def parts(self):
-        """DEPRECATED: Assuming the content-type is multipart/mixed, will return the parts as an async iterator.
-        This is deprecated and will be removed in a later release.
-
-        :rtype: Iterator
-        :return: The parts of the response
-        :raises ValueError: If the content is not multipart/mixed
-        """
-        return _parts_helper(self)
-
-
-class _HttpResponseBaseImpl(
-    _HttpResponseBase, _HttpResponseBackcompatMixinBase
-):  # pylint: disable=too-many-instance-attributes
+class _HttpResponseBaseImpl(_HttpResponseBase):  # pylint: disable=too-many-instance-attributes
     """Base Implementation class for generic.core.rest.HttpRespone and generic.core.rest.AsyncHttpResponse
 
     Since the rest responses are abstract base classes, we need to implement them for each of our transport
@@ -363,7 +236,7 @@ class _HttpResponseBaseImpl(
         return "<HttpResponse: {} {}{}>".format(self.status_code, self.reason, content_type_str)
 
 
-class HttpResponseImpl(_HttpResponseBaseImpl, _HttpResponse, HttpResponseBackcompatMixin):
+class HttpResponseImpl(_HttpResponseBaseImpl, _HttpResponse):
     """HttpResponseImpl built on top of our HttpResponse protocol class.
 
     Since ~generic.core.rest.HttpResponse is an abstract base class, we need to
@@ -440,14 +313,7 @@ class HttpResponseImpl(_HttpResponseBaseImpl, _HttpResponse, HttpResponseBackcom
         self.close()
 
 
-class _RestHttpClientTransportResponseBackcompatBaseMixin(_HttpResponseBackcompatMixinBase):
-    def body(self):
-        if self._content is None:
-            self._content = self.internal_response.read()
-        return self.content
-
-
-class _RestHttpClientTransportResponseBase(_HttpResponseBaseImpl, _RestHttpClientTransportResponseBackcompatBaseMixin):
+class _RestHttpClientTransportResponseBase(_HttpResponseBaseImpl):
     def __init__(self, **kwargs):
         internal_response = kwargs.pop("internal_response")
         headers = case_insensitive_dict(internal_response.getheaders())

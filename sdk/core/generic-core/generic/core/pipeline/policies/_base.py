@@ -128,9 +128,9 @@ class RequestHistory(Generic[HTTPRequestType, HTTPResponseType]):
     This is used to document requests/responses that resulted in redirected/retried requests.
 
     :param http_request: The request.
-    :type http_request: ~generic.core.pipeline.transport.HttpRequest
+    :type http_request: ~generic.core.rest.HttpRequest
     :param http_response: The HTTP response.
-    :type http_response: ~generic.core.pipeline.transport.HttpResponse
+    :type http_response: ~generic.core.rest.HttpResponse
     :param Exception error: An error encountered during the request, or None if the response was received successfully.
     :param dict context: The pipeline context.
     """

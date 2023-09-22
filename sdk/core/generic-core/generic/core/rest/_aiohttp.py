@@ -28,12 +28,10 @@ import asyncio
 from itertools import groupby
 from typing import Iterator, cast
 from multidict import CIMultiDict
-from ._http_response_impl_async import (
-    AsyncHttpResponseImpl,
-    AsyncHttpResponseBackcompatMixin,
-)
+
+from ._http_response_impl_async import AsyncHttpResponseImpl
 from ..pipeline.transport._aiohttp import AioHttpStreamDownloadGenerator
-from ..utils._pipeline_transport_rest_shared import _pad_attr_name, _aiohttp_body_helper
+from ..utils._pipeline_transport_rest_shared import _aiohttp_body_helper
 from ..exceptions import ResponseNotReadError
 
 
@@ -139,38 +137,7 @@ class _CIMultiDict(CIMultiDict):
         return values or default
 
 
-class _RestAioHttpTransportResponseBackcompatMixin(AsyncHttpResponseBackcompatMixin):
-    """Backcompat mixin for aiohttp responses.
-
-    Need to add it's own mixin because it has function load_body, which other
-    transport responses don't have, and also because we need to synchronously
-    decompress the body if users call .body()
-    """
-
-    def body(self) -> bytes:
-        """Return the whole body as bytes in memory.
-
-        Have to modify the default behavior here. In AioHttp, we do decompression
-        when accessing the body method. The behavior here is the same as if the
-        caller did an async read of the response first. But for backcompat reasons,
-        we need to support this decompression within the synchronous body method.
-
-        :return: The response's bytes
-        :rtype: bytes
-        """
-        return _aiohttp_body_helper(self)
-
-    async def _load_body(self) -> None:
-        """Load in memory the body, so it could be accessible from sync methods."""
-        self._content = await self.read()  # type: ignore
-
-    def __getattr__(self, attr):
-        backcompat_attrs = ["load_body"]
-        attr = _pad_attr_name(attr, backcompat_attrs)
-        return super().__getattr__(attr)
-
-
-class RestAioHttpTransportResponse(AsyncHttpResponseImpl, _RestAioHttpTransportResponseBackcompatMixin):
+class RestAioHttpTransportResponse(AsyncHttpResponseImpl):
     def __init__(self, *, internal_response, decompress: bool = True, **kwargs):
         headers = _CIMultiDict(internal_response.headers)
         super().__init__(

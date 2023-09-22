@@ -24,13 +24,13 @@
 #
 # --------------------------------------------------------------------------
 from typing import List, Optional, Any, TypeVar
+
 from .. import PipelineRequest
-from ..transport import HttpRequest as LegacyHttpRequest, HttpResponse as LegacyHttpResponse
 from ...rest import HttpRequest, HttpResponse
 from ._base import SansIOHTTPPolicy
 
-HTTPResponseType = TypeVar("HTTPResponseType", HttpResponse, LegacyHttpResponse)
-HTTPRequestType = TypeVar("HTTPRequestType", HttpRequest, LegacyHttpRequest)
+HTTPResponseType = TypeVar("HTTPResponseType", bound=HttpResponse)
+HTTPRequestType = TypeVar("HTTPRequestType", bound=HttpRequest)
 
 
 class SensitiveHeaderCleanupPolicy(SansIOHTTPPolicy[HTTPRequestType, HTTPResponseType]):
@@ -40,12 +40,7 @@ class SensitiveHeaderCleanupPolicy(SansIOHTTPPolicy[HTTPRequestType, HTTPRespons
     :keyword bool disable_redirect_cleanup: Opt out cleaning up sensitive headers when redirecting to another domain.
     """
 
-    DEFAULT_SENSITIVE_HEADERS = set(
-        [
-            "Authorization",
-            "x-ms-authorization-auxiliary",
-        ]
-    )
+    DEFAULT_SENSITIVE_HEADERS = set(["Authorization"])
 
     def __init__(
         self,  # pylint: disable=unused-argument

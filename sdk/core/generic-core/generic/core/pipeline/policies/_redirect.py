@@ -33,20 +33,13 @@ from typing_extensions import Literal
 
 from ...exceptions import TooManyRedirectsError
 from .. import PipelineResponse, PipelineRequest
-from ..transport import (
-    HttpResponse as LegacyHttpResponse,
-    HttpRequest as LegacyHttpRequest,
-    AsyncHttpResponse as LegacyAsyncHttpResponse,
-)
 from ...rest import HttpResponse, HttpRequest, AsyncHttpResponse
 from ._base import HTTPPolicy, RequestHistory
 from ._utils import get_domain
 
-HTTPResponseType = TypeVar("HTTPResponseType", HttpResponse, LegacyHttpResponse)
-AllHttpResponseType = TypeVar(
-    "AllHttpResponseType", HttpResponse, LegacyHttpResponse, AsyncHttpResponse, LegacyAsyncHttpResponse
-)
-HTTPRequestType = TypeVar("HTTPRequestType", HttpRequest, LegacyHttpRequest)
+HTTPResponseType = TypeVar("HTTPResponseType", bound=HttpResponse)
+AllHttpResponseType = TypeVar("AllHttpResponseType", HttpResponse, AsyncHttpResponse)
+HTTPRequestType = TypeVar("HTTPRequestType", bound=HttpRequest)
 ClsRedirectPolicy = TypeVar("ClsRedirectPolicy", bound="RedirectPolicyBase")
 
 _LOGGER = logging.getLogger(__name__)

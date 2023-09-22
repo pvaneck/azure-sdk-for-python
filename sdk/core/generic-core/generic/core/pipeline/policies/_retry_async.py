@@ -29,12 +29,9 @@ This module is the requests implementation of Pipeline ABC
 from typing import TypeVar, Dict, Any, Optional, cast
 import logging
 import time
+
 from .. import PipelineRequest, PipelineResponse
-from ..transport import (
-    AsyncHttpResponse as LegacyAsyncHttpResponse,
-    HttpRequest as LegacyHttpRequest,
-    AsyncHttpTransport,
-)
+from ..transport import AsyncHttpTransport
 from ...rest import AsyncHttpResponse, HttpRequest
 from ...exceptions import (
     ServiceError,
@@ -44,8 +41,8 @@ from ...exceptions import (
 from ._base_async import AsyncHTTPPolicy
 from ._retry import RetryPolicyBase
 
-AsyncHTTPResponseType = TypeVar("AsyncHTTPResponseType", AsyncHttpResponse, LegacyAsyncHttpResponse)
-HTTPRequestType = TypeVar("HTTPRequestType", HttpRequest, LegacyHttpRequest)
+AsyncHTTPResponseType = TypeVar("AsyncHTTPResponseType", bound=AsyncHttpResponse)
+HTTPRequestType = TypeVar("HTTPRequestType", bound=HttpRequest)
 
 _LOGGER = logging.getLogger(__name__)
 

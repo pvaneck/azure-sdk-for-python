@@ -28,19 +28,13 @@ import email.utils
 from typing import Optional, cast, Union
 from urllib.parse import urlparse
 
-from ..transport import (
-    HttpResponse as LegacyHttpResponse,
-    AsyncHttpResponse as LegacyAsyncHttpResponse,
-    HttpRequest as LegacyHttpRequest,
-)
 from ...rest import HttpResponse, AsyncHttpResponse, HttpRequest
 
 
 from ...utils._utils import _FixedOffset, case_insensitive_dict
 from .. import PipelineResponse
 
-AllHttpResponseType = Union[HttpResponse, LegacyHttpResponse, AsyncHttpResponse, LegacyAsyncHttpResponse]
-HTTPRequestType = Union[HttpRequest, LegacyHttpRequest]
+AllHttpResponseType = Union[HttpResponse, AsyncHttpResponse]
 
 
 def _parse_http_date(text: str) -> datetime.datetime:
@@ -74,7 +68,7 @@ def parse_retry_after(retry_after: str) -> float:
     return max(0, delay)
 
 
-def get_retry_after(response: PipelineResponse[HTTPRequestType, AllHttpResponseType]) -> Optional[float]:
+def get_retry_after(response: PipelineResponse[HttpRequest, AllHttpResponseType]) -> Optional[float]:
     """Get the value of Retry-After in seconds.
 
     :param response: The PipelineResponse object
@@ -86,11 +80,6 @@ def get_retry_after(response: PipelineResponse[HTTPRequestType, AllHttpResponseT
     retry_after = headers.get("retry-after")
     if retry_after:
         return parse_retry_after(retry_after)
-    for ms_header in ["retry-after-ms", "x-ms-retry-after-ms"]:
-        retry_after = headers.get(ms_header)
-        if retry_after:
-            parsed_retry_after = parse_retry_after(retry_after)
-            return parsed_retry_after / 1000.0
     return None
 
 

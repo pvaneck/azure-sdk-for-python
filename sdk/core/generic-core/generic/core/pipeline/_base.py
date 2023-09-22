@@ -191,7 +191,7 @@ class Pipeline(ContextManager["Pipeline"], Generic[HTTPRequestType, HTTPResponse
 
     def _prepare_multipart(self, request: HTTPRequestType) -> None:
         # This code is fine as long as HTTPRequestType is actually
-        # generic.core.pipeline.transport.HTTPRequest, bu we don't check it in here
+        # generic.core.rest.HttpRequest, bu we don't check it in here
         # since we didn't see (yet) pipeline usage where it's not this actual instance
         # class used
         self._prepare_multipart_mixed_request(request)
@@ -201,7 +201,7 @@ class Pipeline(ContextManager["Pipeline"], Generic[HTTPRequestType, HTTPResponse
         """Runs the HTTP Request through the chained policies.
 
         :param request: The HTTP request object.
-        :type request: ~generic.core.pipeline.transport.HttpRequest
+        :type request: ~generic.core.rest.HttpRequest
         :return: The PipelineResponse object
         :rtype: ~generic.core.pipeline.PipelineResponse
         """

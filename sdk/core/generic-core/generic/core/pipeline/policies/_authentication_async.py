@@ -10,19 +10,15 @@ from typing import TYPE_CHECKING, Any, Awaitable, Optional, cast, TypeVar
 from ...credentials import AccessToken
 from .. import PipelineRequest, PipelineResponse
 from .._base_async import AsyncHTTPPolicy
-from ._authentication import (
-    _BearerTokenCredentialPolicyBase,
-)
-from ..transport import AsyncHttpResponse as LegacyAsyncHttpResponse, HttpRequest as LegacyHttpRequest
+from ._authentication import _BearerTokenCredentialPolicyBase
 from ...rest import AsyncHttpResponse, HttpRequest
-
 from .._tools_async import await_result
 
 if TYPE_CHECKING:
     from ...credentials_async import AsyncTokenCredential
 
-AsyncHTTPResponseType = TypeVar("AsyncHTTPResponseType", AsyncHttpResponse, LegacyAsyncHttpResponse)
-HTTPRequestType = TypeVar("HTTPRequestType", HttpRequest, LegacyHttpRequest)
+AsyncHTTPResponseType = TypeVar("AsyncHTTPResponseType", bound=AsyncHttpResponse)
+HTTPRequestType = TypeVar("HTTPRequestType", bound=HttpRequest)
 
 
 class AsyncBearerTokenCredentialPolicy(AsyncHTTPPolicy[HTTPRequestType, AsyncHTTPResponseType]):

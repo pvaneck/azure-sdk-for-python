@@ -75,6 +75,9 @@ class Configuration(GenericConfiguration):  # pylint: disable=too-many-instance-
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
+        # Http logger configuration
+        self.http_logging_policy: Optional[AnyPolicy[HTTPRequestType, HTTPResponseType]] = None
+
          # Custom hook configuration
         self.custom_hook_policy: Optional[AnyPolicy[HTTPRequestType, HTTPResponseType]] = None
 

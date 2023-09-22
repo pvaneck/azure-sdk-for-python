@@ -141,7 +141,7 @@ class PipelineRequest(Generic[HTTPRequestType]):
     Universal for all transports, both synchronous and asynchronous.
 
     :param http_request: The request object.
-    :type http_request: ~generic.core.pipeline.transport.HttpRequest
+    :type http_request: ~generic.core.rest.HttpRequest
     :param context: Contains the context - data persisted between pipeline requests.
     :type context: ~generic.core.pipeline.PipelineContext
     """
@@ -162,9 +162,9 @@ class PipelineResponse(Generic[HTTPRequestType, HTTPResponseType]):
     However, nothing prevents a policy to actually sub-class this class a return it instead of the initial instance.
 
     :param http_request: The request object.
-    :type http_request: ~generic.core.pipeline.transport.HttpRequest
+    :type http_request: ~generic.core.rest.HttpRequest
     :param http_response: The response object.
-    :type http_response: ~generic.core.pipeline.transport.HttpResponse
+    :type http_response: ~generic.core.rest.HttpResponse
     :param context: Contains the context - data persisted between pipeline requests.
     :type context: ~generic.core.pipeline.PipelineContext
     """

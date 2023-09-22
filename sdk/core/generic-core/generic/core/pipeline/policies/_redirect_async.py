@@ -24,19 +24,16 @@
 #
 # --------------------------------------------------------------------------
 from typing import TypeVar
-from generic.core.exceptions import TooManyRedirectsError
-from generic.core.pipeline import PipelineResponse, PipelineRequest
-from generic.core.pipeline.transport import (
-    AsyncHttpResponse as LegacyAsyncHttpResponse,
-    HttpRequest as LegacyHttpRequest,
-)
-from generic.core.rest import AsyncHttpResponse, HttpRequest
+
 from . import AsyncHTTPPolicy
 from ._redirect import RedirectPolicyBase, domain_changed
 from ._utils import get_domain
+from .. import PipelineResponse, PipelineRequest
+from ...exceptions import TooManyRedirectsError
+from ...rest import AsyncHttpResponse, HttpRequest
 
-AsyncHTTPResponseType = TypeVar("AsyncHTTPResponseType", AsyncHttpResponse, LegacyAsyncHttpResponse)
-HTTPRequestType = TypeVar("HTTPRequestType", HttpRequest, LegacyHttpRequest)
+AsyncHTTPResponseType = TypeVar("AsyncHTTPResponseType", bound=AsyncHttpResponse)
+HTTPRequestType = TypeVar("HTTPRequestType", bound=HttpRequest)
 
 
 class AsyncRedirectPolicy(RedirectPolicyBase, AsyncHTTPPolicy[HTTPRequestType, AsyncHTTPResponseType]):

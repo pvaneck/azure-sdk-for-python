@@ -72,6 +72,9 @@ setup(
         "requests>=2.18.4",
         "six>=1.11.0",
         "typing-extensions>=4.6.0",
+
+        # Generic core package. Github URL is temporary until we release the package.
+        "generic-core @ git+https://github.com/Azure/azure-sdk-for-python.git@feature/generic-core#subdirectory=sdk/core/generic-core"
     ],
     extras_require={
         "aio": [

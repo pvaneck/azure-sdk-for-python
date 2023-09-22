@@ -28,14 +28,10 @@ from io import SEEK_SET, UnsupportedOperation
 import logging
 import time
 from enum import Enum
+
 from ...configuration import ConnectionConfiguration
 from .. import PipelineResponse, PipelineRequest, PipelineContext
-from ..transport import (
-    HttpResponse as LegacyHttpResponse,
-    AsyncHttpResponse as LegacyAsyncHttpResponse,
-    HttpRequest as LegacyHttpRequest,
-    HttpTransport,
-)
+from ..transport import HttpTransport
 from ...rest import HttpResponse, AsyncHttpResponse, HttpRequest
 from ...exceptions import (
     ServiceError,
@@ -50,11 +46,9 @@ from ._base import HTTPPolicy, RequestHistory
 from . import _utils
 from ..._enum_meta import CaseInsensitiveEnumMeta
 
-HTTPResponseType = TypeVar("HTTPResponseType", HttpResponse, LegacyHttpResponse)
-AllHttpResponseType = TypeVar(
-    "AllHttpResponseType", HttpResponse, LegacyHttpResponse, AsyncHttpResponse, LegacyAsyncHttpResponse
-)
-HTTPRequestType = TypeVar("HTTPRequestType", HttpRequest, LegacyHttpRequest)
+HTTPResponseType = TypeVar("HTTPResponseType", bound=HttpResponse)
+AllHttpResponseType = TypeVar("AllHttpResponseType", HttpResponse, AsyncHttpResponse)
+HTTPRequestType = TypeVar("HTTPRequestType", bound=HttpRequest)
 ClsRetryPolicy = TypeVar("ClsRetryPolicy", bound="RetryPolicyBase")
 
 _LOGGER = logging.getLogger(__name__)

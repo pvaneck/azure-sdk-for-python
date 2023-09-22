@@ -10,15 +10,14 @@ from urllib.parse import urlparse
 from typing import Any, Sequence, Optional, Union, Callable, Dict, Type, Generic, TypeVar
 from types import TracebackType
 from typing_extensions import Protocol, ContextManager, runtime_checkable
-from ..pipeline.transport import HttpRequest, HttpResponse, AsyncHttpResponse
 from ..rest import (
     HttpResponse as RestHttpResponse,
     AsyncHttpResponse as AsyncRestHttpResponse,
     HttpRequest as RestHttpRequest,
 )
 
-HttpResponseType = Union[HttpResponse, AsyncHttpResponse, RestHttpResponse, AsyncRestHttpResponse]
-HttpRequestType = Union[HttpRequest, RestHttpRequest]
+HttpResponseType = Union[RestHttpResponse, AsyncRestHttpResponse]
+HttpRequestType = RestHttpRequest
 
 AttributeValue = Union[
     str,
@@ -146,8 +145,7 @@ class AbstractSpan(Protocol, Generic[SpanType]):
         :param request: The request made
         :type request: HttpRequest
         :param response: The response received by the server. Is None if no response received.
-        :type response: ~generic.core.pipeline.transport.HttpResponse or
-            ~generic.core.pipeline.transport.AsyncHttpResponse
+        :type response: ~generic.core.rest.HttpResponse or ~generic.core.rest.AsyncHttpResponse
         """
         ...
 
@@ -271,8 +269,7 @@ class HttpSpanMixin:
         :param request: The request made
         :type request: HttpRequest
         :param response: The response received from the server. Is None if no response received.
-        :type response: ~generic.core.pipeline.transport.HttpResponse or
-            ~generic.core.pipeline.transport.AsyncHttpResponse
+        :type response: ~generic.core.rest.HttpResponse or ~generic.core.rest.AsyncHttpResponse
         """
         # Also see https://github.com/python/mypy/issues/5837
         self.kind = SpanKind.CLIENT

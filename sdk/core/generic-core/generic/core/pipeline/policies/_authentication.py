@@ -5,8 +5,8 @@
 # -------------------------------------------------------------------------
 import time
 from typing import TYPE_CHECKING, Optional, TypeVar, MutableMapping, Any
+
 from .. import PipelineRequest, PipelineResponse
-from ..transport import HttpResponse as LegacyHttpResponse, HttpRequest as LegacyHttpRequest
 from ...rest import HttpResponse, HttpRequest
 from . import HTTPPolicy, SansIOHTTPPolicy
 from ...exceptions import ServiceRequestError
@@ -19,8 +19,8 @@ if TYPE_CHECKING:
         ServiceKeyCredential,
     )
 
-HTTPResponseType = TypeVar("HTTPResponseType", HttpResponse, LegacyHttpResponse)
-HTTPRequestType = TypeVar("HTTPRequestType", HttpRequest, LegacyHttpRequest)
+HTTPResponseType = TypeVar("HTTPResponseType", bound=HttpResponse)
+HTTPRequestType = TypeVar("HTTPRequestType", bound=HttpRequest)
 
 
 # pylint:disable=too-few-public-methods

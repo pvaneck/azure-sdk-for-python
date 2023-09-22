@@ -24,21 +24,16 @@
 #
 # --------------------------------------------------------------------------
 from typing import List, Optional, Any
-from ._base import HttpTransport, HttpRequest, HttpResponse
-from ._base_async import AsyncHttpTransport, AsyncHttpResponse
+from ._base import HttpTransport
+from ._base_async import AsyncHttpTransport
 
 # pylint: disable=undefined-all-variable
 
 __all__ = [
     "HttpTransport",
-    "HttpRequest",
-    "HttpResponse",
     "RequestsTransport",
-    "RequestsTransportResponse",
     "AsyncHttpTransport",
-    "AsyncHttpResponse",
     "AioHttpTransport",
-    "AioHttpTransportResponse",
 ]
 
 # pylint: disable=unused-import, redefined-outer-name, no-member, too-many-statements, too-many-branches
@@ -53,20 +48,6 @@ def __dir__() -> List[str]:
 
 def __getattr__(name: str):
     transport: Optional[Any] = None
-    if name == "AsyncioRequestsTransport":
-        try:
-            from ._requests_asyncio import AsyncioRequestsTransport
-
-            transport = AsyncioRequestsTransport
-        except ImportError as err:
-            raise ImportError("requests package is not installed") from err
-    if name == "AsyncioRequestsTransportResponse":
-        try:
-            from ._requests_asyncio import AsyncioRequestsTransportResponse
-
-            transport = AsyncioRequestsTransportResponse
-        except ImportError as err:
-            raise ImportError("requests package is not installed") from err
     if name == "RequestsTransport":
         try:
             from ._requests_basic import RequestsTransport
@@ -74,25 +55,11 @@ def __getattr__(name: str):
             transport = RequestsTransport
         except ImportError as err:
             raise ImportError("requests package is not installed") from err
-    if name == "RequestsTransportResponse":
-        try:
-            from ._requests_basic import RequestsTransportResponse
-
-            transport = RequestsTransportResponse
-        except ImportError as err:
-            raise ImportError("requests package is not installed") from err
     if name == "AioHttpTransport":
         try:
             from ._aiohttp import AioHttpTransport
 
             transport = AioHttpTransport
-        except ImportError as err:
-            raise ImportError("aiohttp package is not installed") from err
-    if name == "AioHttpTransportResponse":
-        try:
-            from ._aiohttp import AioHttpTransportResponse
-
-            transport = AioHttpTransportResponse
         except ImportError as err:
             raise ImportError("aiohttp package is not installed") from err
     if transport:

@@ -34,7 +34,6 @@ from .pipeline.transport import HttpTransport
 from .pipeline.policies import (
     ContentDecodePolicy,
     DistributedTracingPolicy,
-    HttpLoggingPolicy,
     RequestIdPolicy,
     RetryPolicy,
     SensitiveHeaderCleanupPolicy,
@@ -140,7 +139,6 @@ class PipelineClient(PipelineClientBase, Generic[HTTPRequestType, HTTPResponseTy
                     config.logging_policy,
                     DistributedTracingPolicy(**kwargs),
                     SensitiveHeaderCleanupPolicy(**kwargs) if config.redirect_policy else None,
-                    config.http_logging_policy or HttpLoggingPolicy(**kwargs),
                 ]
             )
         else:

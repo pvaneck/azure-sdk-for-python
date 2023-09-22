@@ -24,11 +24,9 @@
 #
 # --------------------------------------------------------------------------
 import logging
-from typing import Iterator, Optional, Union, TypeVar, overload, cast, TYPE_CHECKING
+from typing import Optional, Union, TypeVar, cast, TYPE_CHECKING
 from urllib3.util.retry import Retry
 from urllib3.exceptions import (
-    DecodeError as CoreDecodeError,
-    ReadTimeoutError,
     ProtocolError,
     NewConnectionError,
     ConnectTimeoutError,
@@ -41,14 +39,12 @@ from ...exceptions import (
     ServiceResponseError,
     IncompleteReadError,
     HttpResponseError,
-    DecodeError,
 )
-from . import HttpRequest  # pylint: disable=unused-import
 
-from ._base import HttpTransport, HttpResponse, _HttpResponseBase
+from ._base import HttpTransport
 from ._bigger_block_size_http_adapters import BiggerBlockSizeHTTPAdapter
+from ...rest._requests_basic import RestRequestsTransportResponse
 from .._tools import (
-    is_rest as _is_rest,
     handle_non_stream_rest_response as _handle_non_stream_rest_response,
 )
 
@@ -65,156 +61,6 @@ ServiceErrorUnion = Union[
 PipelineType = TypeVar("PipelineType")
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _read_raw_stream(response, chunk_size=1):
-    # Special case for urllib3.
-    if hasattr(response.raw, "stream"):
-        try:
-            for chunk in response.raw.stream(chunk_size, decode_content=False):
-                yield chunk
-        except ProtocolError as e:
-            raise ServiceResponseError(e, error=e) from e
-        except CoreDecodeError as e:
-            raise DecodeError(e, error=e) from e
-        except ReadTimeoutError as e:
-            raise ServiceRequestError(e, error=e) from e
-    else:
-        # Standard file-like object.
-        while True:
-            chunk = response.raw.read(chunk_size)
-            if not chunk:
-                break
-            yield chunk
-
-    # following behavior from requests iter_content, we set content consumed to True
-    # https://github.com/psf/requests/blob/master/requests/models.py#L774
-    response._content_consumed = True  # pylint: disable=protected-access
-
-
-class _RequestsTransportResponseBase(_HttpResponseBase):
-    """Base class for accessing response data.
-
-    :param HttpRequest request: The request.
-    :param requests_response: The object returned from the HTTP library.
-    :type requests_response: requests.Response
-    :param int block_size: Size in bytes.
-    """
-
-    def __init__(self, request, requests_response, block_size=None):
-        super(_RequestsTransportResponseBase, self).__init__(request, requests_response, block_size=block_size)
-        self.status_code = requests_response.status_code
-        self.headers = requests_response.headers
-        self.reason = requests_response.reason
-        self.content_type = requests_response.headers.get("content-type")
-
-    def body(self):
-        return self.internal_response.content
-
-    def text(self, encoding: Optional[str] = None) -> str:
-        """Return the whole body as a string.
-
-        If encoding is not provided, mostly rely on requests auto-detection, except
-        for BOM, that requests ignores. If we see a UTF8 BOM, we assumes UTF8 unlike requests.
-
-        :param str encoding: The encoding to apply.
-        :rtype: str
-        :return: The body as text.
-        """
-        if not encoding:
-            # There is a few situation where "requests" magic doesn't fit us:
-            # - https://github.com/psf/requests/issues/654
-            # - https://github.com/psf/requests/issues/1737
-            # - https://github.com/psf/requests/issues/2086
-            from codecs import BOM_UTF8
-
-            if self.internal_response.content[:3] == BOM_UTF8:
-                encoding = "utf-8-sig"
-
-        if encoding:
-            if encoding == "utf-8":
-                encoding = "utf-8-sig"
-
-            self.internal_response.encoding = encoding
-
-        return self.internal_response.text
-
-
-class StreamDownloadGenerator:
-    """Generator for streaming response data.
-
-    :param pipeline: The pipeline object
-    :type pipeline: ~generic.core.pipeline.Pipeline
-    :param response: The response object.
-    :type response: ~generic.core.pipeline.transport.HttpResponse
-    :keyword bool decompress: If True which is default, will attempt to decode the body based
-        on the *content-encoding* header.
-    """
-
-    def __init__(self, pipeline, response, **kwargs):
-        self.pipeline = pipeline
-        self.request = response.request
-        self.response = response
-        self.block_size = response.block_size
-        decompress = kwargs.pop("decompress", True)
-        if len(kwargs) > 0:
-            raise TypeError("Got an unexpected keyword argument: {}".format(list(kwargs.keys())[0]))
-        internal_response = response.internal_response
-        if decompress:
-            self.iter_content_func = internal_response.iter_content(self.block_size)
-        else:
-            self.iter_content_func = _read_raw_stream(internal_response, self.block_size)
-        self.content_length = int(response.headers.get("Content-Length", 0))
-
-    def __len__(self):
-        return self.content_length
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        internal_response = self.response.internal_response
-        try:
-            chunk = next(self.iter_content_func)
-            if not chunk:
-                raise StopIteration()
-            return chunk
-        except StopIteration:
-            internal_response.close()
-            raise StopIteration()  # pylint: disable=raise-missing-from
-        except requests.exceptions.StreamConsumedError:
-            raise
-        except requests.exceptions.ContentDecodingError as err:
-            raise DecodeError(err, error=err) from err
-        except requests.exceptions.ChunkedEncodingError as err:
-            msg = err.__str__()
-            if "IncompleteRead" in msg:
-                _LOGGER.warning("Incomplete download: %s", err)
-                internal_response.close()
-                raise IncompleteReadError(err, error=err) from err
-            _LOGGER.warning("Unable to stream download: %s", err)
-            internal_response.close()
-            raise HttpResponseError(err, error=err) from err
-        except Exception as err:
-            _LOGGER.warning("Unable to stream download: %s", err)
-            internal_response.close()
-            raise
-
-    next = __next__  # Python 2 compatibility.
-
-
-class RequestsTransportResponse(HttpResponse, _RequestsTransportResponseBase):
-    """Streaming of data from the response."""
-
-    def stream_download(self, pipeline: PipelineType, **kwargs) -> Iterator[bytes]:
-        """Generator for streaming request body data.
-
-        :param pipeline: The pipeline object
-        :type pipeline: ~generic.core.pipeline.Pipeline
-        :rtype: iterator[bytes]
-        :return: The stream of data
-        """
-        return StreamDownloadGenerator(pipeline, self, **kwargs)
 
 
 class RequestsTransport(HttpTransport):
@@ -285,41 +131,13 @@ class RequestsTransport(HttpTransport):
             self._session_owner = False
             self.session = None
 
-    @overload
-    def send(self, request: HttpRequest, **kwargs) -> HttpResponse:
-        """Send a rest request and get back a rest response.
-
-        :param request: The request object to be sent.
-        :type request: ~generic.core.pipeline.transport.HttpRequest
-        :return: An HTTPResponse object.
-        :rtype: ~generic.core.pipeline.transport.HttpResponse
-
-        :keyword requests.Session session: will override the driver session and use yours.
-         Should NOT be done unless really required. Anything else is sent straight to requests.
-        :keyword dict proxies: will define the proxy to use. Proxy is a dict (protocol, url)
-        """
-
-    @overload
     def send(self, request: "RestHttpRequest", **kwargs) -> "RestHttpResponse":
-        """Send an `generic.core.rest` request and get back a rest response.
-
-        :param request: The request object to be sent.
-        :type request: ~generic.core.rest.HttpRequest
-        :return: An HTTPResponse object.
-        :rtype: ~generic.core.rest.HttpResponse
-
-        :keyword requests.Session session: will override the driver session and use yours.
-         Should NOT be done unless really required. Anything else is sent straight to requests.
-        :keyword dict proxies: will define the proxy to use. Proxy is a dict (protocol, url)
-        """
-
-    def send(self, request: Union[HttpRequest, "RestHttpRequest"], **kwargs) -> Union[HttpResponse, "RestHttpResponse"]:
         """Send request object according to configuration.
 
         :param request: The request object to be sent.
-        :type request: ~generic.core.pipeline.transport.HttpRequest
+        :type request:  ~generic.core.rest.HttpRequest
         :return: An HTTPResponse object.
-        :rtype: ~generic.core.pipeline.transport.HttpResponse
+        :rtype: ~generic.core.rest.HttpResponse
 
         :keyword requests.Session session: will override the driver session and use yours.
          Should NOT be done unless really required. Anything else is sent straight to requests.
@@ -379,15 +197,12 @@ class RequestsTransport(HttpTransport):
 
         if error:
             raise error
-        if _is_rest(request):
-            from generic.core.rest._requests_basic import RestRequestsTransportResponse
 
-            retval: RestHttpResponse = RestRequestsTransportResponse(
-                request=request,
-                internal_response=response,
-                block_size=self.connection_config.data_block_size,
-            )
-            if not kwargs.get("stream"):
-                _handle_non_stream_rest_response(retval)
-            return retval
-        return RequestsTransportResponse(request, response, self.connection_config.data_block_size)
+        retval: RestHttpResponse = RestRequestsTransportResponse(
+            request=request,
+            internal_response=response,
+            block_size=self.connection_config.data_block_size,
+        )
+        if not kwargs.get("stream"):
+            _handle_non_stream_rest_response(retval)
+        return retval

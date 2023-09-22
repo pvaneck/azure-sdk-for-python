@@ -199,15 +199,14 @@ class HttpResponseError(ServiceError):
 
     :param object message: The message object stringified as 'message' attribute
     :param response: The response that triggered the exception.
-    :type response: ~generic.core.pipeline.transport.HttpResponse or ~generic.core.pipeline.transport.AsyncHttpResponse
+    :type response: ~generic.core.rest.HttpResponse or ~generic.core.rest.AsyncHttpResponse
 
     :ivar reason: The HTTP response reason
     :vartype reason: str
     :ivar status_code: HttpResponse's status code
     :vartype status_code: int
     :ivar response: The response that triggered the exception.
-    :vartype response: ~generic.core.pipeline.transport.HttpResponse or
-        ~generic.core.pipeline.transport.AsyncHttpResponse
+    :vartype response: ~generic.core.rest.HttpResponse or ~generic.core.rest.AsyncHttpResponse
     """
 
     def __init__(

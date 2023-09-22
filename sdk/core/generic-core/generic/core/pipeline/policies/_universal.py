@@ -36,7 +36,6 @@ import types
 import re
 import uuid
 from typing import IO, cast, Union, Optional, AnyStr, Dict, Any, Set, Mapping
-import urllib.parse
 
 from ... import __version__ as core_version
 from ...exceptions import DecodeError
@@ -44,15 +43,13 @@ from ...exceptions import DecodeError
 from .. import PipelineRequest, PipelineResponse
 from ._base import SansIOHTTPPolicy
 
-from ..transport import HttpRequest as LegacyHttpRequest
-from ..transport._base import _HttpResponseBase as LegacySansIOHttpResponse
 from ...rest import HttpRequest
 from ...rest._rest_py3 import _HttpResponseBase as SansIOHttpResponse
 
 _LOGGER = logging.getLogger(__name__)
 
-HTTPRequestType = Union[LegacyHttpRequest, HttpRequest]
-HTTPResponseType = Union[LegacySansIOHttpResponse, SansIOHttpResponse]
+HTTPRequestType = HttpRequest
+HTTPResponseType = SansIOHttpResponse
 PipelineResponseType = PipelineResponse[HTTPRequestType, HTTPResponseType]
 
 
@@ -123,7 +120,7 @@ class RequestIdPolicy(SansIOHTTPPolicy[HTTPRequestType, HTTPResponseType]):
 
     :keyword str request_id: The request id to be added into header.
     :keyword bool auto_request_id: Auto generates a unique request ID per call if true which is by default.
-    :keyword str request_id_header_name: Header name to use. Default is "x-ms-client-request-id".
+    :keyword str request_id_header_name: Header name to use. Default is "x-request-id".
 
     .. admonition:: Example:
 
@@ -140,7 +137,7 @@ class RequestIdPolicy(SansIOHTTPPolicy[HTTPRequestType, HTTPResponseType]):
         *,
         request_id: Union[str, Any] = _Unset,
         auto_request_id: bool = True,
-        request_id_header_name: str = "x-ms-client-request-id",
+        request_id_header_name: str = "x-request-id",
         **kwargs: Any
     ) -> None:
         super()
@@ -387,171 +384,6 @@ class _HiddenClassProperties(type):
         cls.DEFAULT_HEADERS_ALLOWLIST = value
 
 
-class HttpLoggingPolicy(
-    SansIOHTTPPolicy[HTTPRequestType, HTTPResponseType],
-    metaclass=_HiddenClassProperties,
-):
-    """The Pipeline policy that handles logging of HTTP requests and responses.
-
-    :param logger: The logger to use for logging. Default to generic.core.pipeline.policies.http_logging_policy.
-    :type logger: logging.Logger
-    """
-
-    DEFAULT_HEADERS_ALLOWLIST: Set[str] = set(
-        [
-            "x-ms-request-id",
-            "x-ms-client-request-id",
-            "x-ms-return-client-request-id",
-            "x-ms-error-code",
-            "traceparent",
-            "Accept",
-            "Cache-Control",
-            "Connection",
-            "Content-Length",
-            "Content-Type",
-            "Date",
-            "ETag",
-            "Expires",
-            "If-Match",
-            "If-Modified-Since",
-            "If-None-Match",
-            "If-Unmodified-Since",
-            "Last-Modified",
-            "Pragma",
-            "Request-Id",
-            "Retry-After",
-            "Server",
-            "Transfer-Encoding",
-            "User-Agent",
-            "WWW-Authenticate",  # OAuth Challenge header.
-        ]
-    )
-    REDACTED_PLACEHOLDER: str = "REDACTED"
-    MULTI_RECORD_LOG: str = "CORE_SDK_LOGGING_MULTIRECORD"
-
-    def __init__(self, logger: Optional[logging.Logger] = None, **kwargs: Any):  # pylint: disable=unused-argument
-        self.logger: logging.Logger = logger or logging.getLogger("generic.core.pipeline.policies.http_logging_policy")
-        self.allowed_query_params: Set[str] = set()
-        self.allowed_header_names: Set[str] = set(self.__class__.DEFAULT_HEADERS_ALLOWLIST)
-
-    def _redact_query_param(self, key: str, value: str) -> str:
-        lower_case_allowed_query_params = [param.lower() for param in self.allowed_query_params]
-        return value if key.lower() in lower_case_allowed_query_params else HttpLoggingPolicy.REDACTED_PLACEHOLDER
-
-    def _redact_header(self, key: str, value: str) -> str:
-        lower_case_allowed_header_names = [header.lower() for header in self.allowed_header_names]
-        return value if key.lower() in lower_case_allowed_header_names else HttpLoggingPolicy.REDACTED_PLACEHOLDER
-
-    def on_request(  # pylint: disable=too-many-return-statements
-        self, request: PipelineRequest[HTTPRequestType]
-    ) -> None:
-        """Logs HTTP method, url and headers.
-        :param request: The PipelineRequest object.
-        :type request: ~generic.core.pipeline.PipelineRequest
-        """
-        http_request = request.http_request
-        options = request.context.options
-        # Get logger in my context first (request has been retried)
-        # then read from kwargs (pop if that's the case)
-        # then use my instance logger
-        logger = request.context.setdefault("logger", options.pop("logger", self.logger))
-
-        if not logger.isEnabledFor(logging.INFO):
-            return
-
-        try:
-            parsed_url = list(urllib.parse.urlparse(http_request.url))
-            parsed_qp = urllib.parse.parse_qsl(parsed_url[4], keep_blank_values=True)
-            filtered_qp = [(key, self._redact_query_param(key, value)) for key, value in parsed_qp]
-            # 4 is query
-            parsed_url[4] = "&".join(["=".join(part) for part in filtered_qp])
-            redacted_url = urllib.parse.urlunparse(parsed_url)
-
-            multi_record = os.environ.get(HttpLoggingPolicy.MULTI_RECORD_LOG, False)
-            if multi_record:
-                logger.info("Request URL: %r", redacted_url)
-                logger.info("Request method: %r", http_request.method)
-                logger.info("Request headers:")
-                for header, value in http_request.headers.items():
-                    value = self._redact_header(header, value)
-                    logger.info("    %r: %r", header, value)
-                if isinstance(http_request.body, types.GeneratorType):
-                    logger.info("File upload")
-                    return
-                try:
-                    if isinstance(http_request.body, types.AsyncGeneratorType):
-                        logger.info("File upload")
-                        return
-                except AttributeError:
-                    pass
-                if http_request.body:
-                    logger.info("A body is sent with the request")
-                    return
-                logger.info("No body was attached to the request")
-                return
-            log_string = "Request URL: '{}'".format(redacted_url)
-            log_string += "\nRequest method: '{}'".format(http_request.method)
-            log_string += "\nRequest headers:"
-            for header, value in http_request.headers.items():
-                value = self._redact_header(header, value)
-                log_string += "\n    '{}': '{}'".format(header, value)
-            if isinstance(http_request.body, types.GeneratorType):
-                log_string += "\nFile upload"
-                logger.info(log_string)
-                return
-            try:
-                if isinstance(http_request.body, types.AsyncGeneratorType):
-                    log_string += "\nFile upload"
-                    logger.info(log_string)
-                    return
-            except AttributeError:
-                pass
-            if http_request.body:
-                log_string += "\nA body is sent with the request"
-                logger.info(log_string)
-                return
-            log_string += "\nNo body was attached to the request"
-            logger.info(log_string)
-
-        except Exception as err:  # pylint: disable=broad-except
-            logger.warning("Failed to log request: %s", repr(err))
-
-    def on_response(
-        self,
-        request: PipelineRequest[HTTPRequestType],
-        response: PipelineResponse[HTTPRequestType, HTTPResponseType],
-    ) -> None:
-        http_response = response.http_response
-
-        # Get logger in my context first (request has been retried)
-        # then read from kwargs (pop if that's the case)
-        # then use my instance logger
-        # If on_request was called, should always read from context
-        options = request.context.options
-        logger = request.context.setdefault("logger", options.pop("logger", self.logger))
-
-        try:
-            if not logger.isEnabledFor(logging.INFO):
-                return
-
-            multi_record = os.environ.get(HttpLoggingPolicy.MULTI_RECORD_LOG, False)
-            if multi_record:
-                logger.info("Response status: %r", http_response.status_code)
-                logger.info("Response headers:")
-                for res_header, value in http_response.headers.items():
-                    value = self._redact_header(res_header, value)
-                    logger.info("    %r: %r", res_header, value)
-                return
-            log_string = "Response status: {}".format(http_response.status_code)
-            log_string += "\nResponse headers:"
-            for res_header, value in http_response.headers.items():
-                value = self._redact_header(res_header, value)
-                log_string += "\n    '{}': '{}'".format(res_header, value)
-            logger.info(log_string)
-        except Exception as err:  # pylint: disable=broad-except
-            logger.warning("Failed to log response: %s", repr(err))
-
-
 class ContentDecodePolicy(SansIOHTTPPolicy[HTTPRequestType, HTTPResponseType]):
     """Policy for decoding unstreamed response content.
 
@@ -585,7 +417,7 @@ class ContentDecodePolicy(SansIOHTTPPolicy[HTTPRequestType, HTTPResponseType]):
         :param data: The data to deserialize.
         :type data: str or bytes or file-like object
         :param response: The HTTP response.
-        :type response: ~generic.core.pipeline.transport.HttpResponse
+        :type response: ~generic.core.rest.HttpResponse
         :param str mime_type: The mime type. As mime type, charset is not expected.
         :param response: If passed, exception will be annotated with that response
         :type response: any

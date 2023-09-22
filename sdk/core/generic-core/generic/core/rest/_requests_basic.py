@@ -23,15 +23,31 @@
 # IN THE SOFTWARE.
 #
 # --------------------------------------------------------------------------
+import logging
 import collections.abc as collections
+from typing import TYPE_CHECKING, Any
+import requests  # pylint: disable=networking-import-outside-azure-core-transport
 from requests.structures import CaseInsensitiveDict  # pylint: disable=networking-import-outside-azure-core-transport
-
-from ._http_response_impl import (
-    _HttpResponseBaseImpl,
-    HttpResponseImpl,
-    _HttpResponseBackcompatMixinBase,
+from urllib3.exceptions import (
+    DecodeError as CoreDecodeError,
+    ReadTimeoutError,
+    ProtocolError,
 )
-from ..pipeline.transport._requests_basic import StreamDownloadGenerator
+
+from ..pipeline import Pipeline
+from ._http_response_impl import _HttpResponseBaseImpl, HttpResponseImpl
+from ..exceptions import (
+    ServiceRequestError,
+    ServiceResponseError,
+    IncompleteReadError,
+    HttpResponseError,
+    DecodeError,
+)
+
+if TYPE_CHECKING:
+    from ..rest import HttpRequest, HttpResponse
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class _ItemsView(collections.ItemsView):
@@ -62,24 +78,7 @@ class _CaseInsensitiveDict(CaseInsensitiveDict):
         return _ItemsView(self)
 
 
-class _RestRequestsTransportResponseBaseMixin(_HttpResponseBackcompatMixinBase):
-    """Backcompat mixin for the sync and async requests responses
-
-    Overriding the default mixin behavior here because we need to synchronously
-    read the response's content for the async requests responses
-    """
-
-    def _body(self):
-        # Since requests is not an async library, for backcompat, users should
-        # be able to access the body directly without loading it first (like we have to do
-        # in aiohttp). So here, we set self._content to self._internal_response.content,
-        # which is similar to read, without the async call.
-        if self._content is None:
-            self._content = self._internal_response.content
-        return self._content
-
-
-class _RestRequestsTransportResponseBase(_HttpResponseBaseImpl, _RestRequestsTransportResponseBaseMixin):
+class _RestRequestsTransportResponseBase(_HttpResponseBaseImpl):
     def __init__(self, **kwargs):
         internal_response = kwargs.pop("internal_response")
         content = None
@@ -100,3 +99,92 @@ class _RestRequestsTransportResponseBase(_HttpResponseBaseImpl, _RestRequestsTra
 class RestRequestsTransportResponse(HttpResponseImpl, _RestRequestsTransportResponseBase):
     def __init__(self, **kwargs):
         super(RestRequestsTransportResponse, self).__init__(stream_download_generator=StreamDownloadGenerator, **kwargs)
+
+
+class StreamDownloadGenerator:
+    """Generator for streaming response data.
+
+    :param pipeline: The pipeline object
+    :type pipeline: ~generic.core.pipeline.Pipeline
+    :param response: The response object.
+    :type response: ~generic.core.rest.HttpResponse
+    :keyword bool decompress: If True which is default, will attempt to decode the body based
+        on the *content-encoding* header.
+    """
+
+    def __init__(self, pipeline: Pipeline, response: RestRequestsTransportResponse, **kwargs: Any) -> None:
+
+        self.pipeline = pipeline
+        self.request = response.request
+        self.response = response
+
+        # TODO: determine if block size should be public on RestTransportResponse.
+        self.block_size = response._block_size  # pylint: disable=protected-access
+        decompress = kwargs.pop("decompress", True)
+        if len(kwargs) > 0:
+            raise TypeError("Got an unexpected keyword argument: {}".format(list(kwargs.keys())[0]))
+        internal_response = response._internal_response
+        if decompress:
+            self.iter_content_func = internal_response.iter_content(self.block_size)
+        else:
+            self.iter_content_func = _read_raw_stream(internal_response, self.block_size)
+        self.content_length = int(response.headers.get("Content-Length", 0))
+
+    def __len__(self):
+        return self.content_length
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        internal_response = self.response._internal_response  # pylint: disable=protected-access
+        try:
+            chunk = next(self.iter_content_func)
+            if not chunk:
+                raise StopIteration()
+            return chunk
+        except StopIteration:
+            internal_response.close()
+            raise StopIteration()  # pylint: disable=raise-missing-from
+        except requests.exceptions.StreamConsumedError:
+            raise
+        except requests.exceptions.ContentDecodingError as err:
+            raise DecodeError(err, error=err) from err
+        except requests.exceptions.ChunkedEncodingError as err:
+            msg = err.__str__()
+            if "IncompleteRead" in msg:
+                _LOGGER.warning("Incomplete download: %s", err)
+                internal_response.close()
+                raise IncompleteReadError(err, error=err) from err
+            _LOGGER.warning("Unable to stream download: %s", err)
+            internal_response.close()
+            raise HttpResponseError(err, error=err) from err
+        except Exception as err:
+            _LOGGER.warning("Unable to stream download: %s", err)
+            internal_response.close()
+            raise
+
+
+def _read_raw_stream(response, chunk_size=1):
+    # Special case for urllib3.
+    if hasattr(response.raw, "stream"):
+        try:
+            for chunk in response.raw.stream(chunk_size, decode_content=False):
+                yield chunk
+        except ProtocolError as e:
+            raise ServiceResponseError(e, error=e) from e
+        except CoreDecodeError as e:
+            raise DecodeError(e, error=e) from e
+        except ReadTimeoutError as e:
+            raise ServiceRequestError(e, error=e) from e
+    else:
+        # Standard file-like object.
+        while True:
+            chunk = response.raw.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+
+    # following behavior from requests iter_content, we set content consumed to True
+    # https://github.com/psf/requests/blob/master/requests/models.py#L774
+    response._content_consumed = True  # pylint: disable=protected-access

@@ -25,16 +25,14 @@
 # --------------------------------------------------------------------------
 from __future__ import annotations
 import sys
-from typing import Any, Optional, AsyncIterator as AsyncIteratorType, TYPE_CHECKING, overload, cast, Union, Type
+from typing import Optional, TYPE_CHECKING, Type, cast
 from types import TracebackType
 from collections.abc import AsyncIterator
 
 import logging
 import asyncio
-import codecs
 import aiohttp  # pylint: disable=networking-import-outside-azure-core-transport
 import aiohttp.client_exceptions  # pylint: disable=networking-import-outside-azure-core-transport
-from multidict import CIMultiDict
 
 from ...configuration import ConnectionConfiguration
 from ...exceptions import (
@@ -43,11 +41,8 @@ from ...exceptions import (
     IncompleteReadError,
 )
 from ...pipeline import AsyncPipeline
-
-from ._base import HttpRequest
-from ._base_async import AsyncHttpTransport, AsyncHttpResponse, _ResponseStopIteration
-from ...utils._pipeline_transport_rest_shared import _aiohttp_body_helper
-from .._tools import is_rest as _is_rest
+from ._base_async import AsyncHttpTransport, _ResponseStopIteration
+from ...rest._aiohttp import RestAioHttpTransportResponse
 from .._tools_async import (
     handle_no_stream_rest_response as _handle_no_stream_rest_response,
 )
@@ -57,7 +52,6 @@ if TYPE_CHECKING:
         HttpRequest as RestHttpRequest,
         AsyncHttpResponse as RestAsyncHttpResponse,
     )
-    from ...rest._aiohttp import RestAioHttpTransportResponse
 
 # Matching requests, because why not?
 CONTENT_CHUNK_SIZE = 10 * 1024
@@ -159,7 +153,7 @@ class AioHttpTransport(AsyncHttpTransport):
         """Get the request data.
 
         :param request: The request object
-        :type request: ~generic.core.pipeline.transport.HttpRequest or ~generic.core.rest.HttpRequest
+        :type request:  ~generic.core.rest.HttpRequest
         :rtype: bytes or ~aiohttp.FormData
         :return: The request data
         """
@@ -174,45 +168,7 @@ class AioHttpTransport(AsyncHttpTransport):
             return form_data
         return request.data
 
-    @overload
-    async def send(self, request: HttpRequest, **config: Any) -> AsyncHttpResponse:
-        """Send the request using this HTTP sender.
-
-        Will pre-load the body into memory to be available with a sync method.
-        Pass stream=True to avoid this behavior.
-
-        :param request: The HttpRequest object
-        :type request: ~generic.core.pipeline.transport.HttpRequest
-        :keyword any config: Any keyword arguments
-        :return: The AsyncHttpResponse
-        :rtype: ~generic.core.pipeline.transport.AsyncHttpResponse
-
-        :keyword bool stream: Defaults to False.
-        :keyword dict proxies: dict of proxy to used based on protocol. Proxy is a dict (protocol, url)
-        :keyword str proxy: will define the proxy to use all the time
-        """
-
-    @overload
-    async def send(self, request: RestHttpRequest, **config: Any) -> RestAsyncHttpResponse:
-        """Send the `generic.core.rest` request using this HTTP sender.
-
-        Will pre-load the body into memory to be available with a sync method.
-        Pass stream=True to avoid this behavior.
-
-        :param request: The HttpRequest object
-        :type request: ~generic.core.rest.HttpRequest
-        :keyword any config: Any keyword arguments
-        :return: The AsyncHttpResponse
-        :rtype: ~generic.core.rest.AsyncHttpResponse
-
-        :keyword bool stream: Defaults to False.
-        :keyword dict proxies: dict of proxy to used based on protocol. Proxy is a dict (protocol, url)
-        :keyword str proxy: will define the proxy to use all the time
-        """
-
-    async def send(
-        self, request: Union[HttpRequest, RestHttpRequest], **config
-    ) -> Union[AsyncHttpResponse, RestAsyncHttpResponse]:
+    async def send(self, request: RestHttpRequest, **config) -> RestAsyncHttpResponse:
         """Send the request using this HTTP sender.
 
         Will pre-load the body into memory to be available with a sync method.
@@ -245,7 +201,7 @@ class AioHttpTransport(AsyncHttpTransport):
                     config["proxy"] = proxies[protocol]
                     break
 
-        response: Optional[Union[AsyncHttpResponse, RestAsyncHttpResponse]] = None
+        response: Optional[RestAsyncHttpResponse] = None
         config["ssl"] = self._build_ssl_config(
             cert=config.pop("connection_cert", self.connection_config.cert),
             verify=config.pop("connection_verify", self.connection_config.verify),
@@ -269,29 +225,16 @@ class AioHttpTransport(AsyncHttpTransport):
                 allow_redirects=False,
                 **config,
             )
-            if _is_rest(request):
-                from ...rest._aiohttp import RestAioHttpTransportResponse
 
-                response = RestAioHttpTransportResponse(
-                    request=request,
-                    internal_response=result,
-                    block_size=self.connection_config.data_block_size,
-                    decompress=not auto_decompress,
-                )
-                if not stream_response:
-                    await _handle_no_stream_rest_response(response)
-            else:
-                # Given the associated "if", this else is legacy implementation
-                # but mypy do not know it, so using a cast
-                request = cast(HttpRequest, request)
-                response = AioHttpTransportResponse(
-                    request,
-                    result,
-                    self.connection_config.data_block_size,
-                    decompress=not auto_decompress,
-                )
-                if not stream_response:
-                    await response.load_body()
+            response = RestAioHttpTransportResponse(
+                request=request,
+                internal_response=result,
+                block_size=self.connection_config.data_block_size,
+                decompress=not auto_decompress,
+            )
+            if not stream_response:
+                await _handle_no_stream_rest_response(response)
+
         except aiohttp.client_exceptions.ClientResponseError as err:
             raise ServiceResponseError(err, error=err) from err
         except asyncio.TimeoutError as err:
@@ -312,17 +255,6 @@ class AioHttpStreamDownloadGenerator(AsyncIterator):
         on the *content-encoding* header.
     """
 
-    @overload
-    def __init__(
-        self,
-        pipeline: AsyncPipeline[HttpRequest, AsyncHttpResponse],
-        response: AioHttpTransportResponse,
-        *,
-        decompress: bool = True,
-    ) -> None:
-        ...
-
-    @overload
     def __init__(
         self,
         pipeline: AsyncPipeline[RestHttpRequest, RestAsyncHttpResponse],
@@ -330,36 +262,31 @@ class AioHttpStreamDownloadGenerator(AsyncIterator):
         *,
         decompress: bool = True,
     ) -> None:
-        ...
-
-    def __init__(
-        self,
-        pipeline: AsyncPipeline,
-        response: Union[AioHttpTransportResponse, RestAioHttpTransportResponse],
-        *,
-        decompress: bool = True,
-    ) -> None:
         self.pipeline = pipeline
         self.request = response.request
         self.response = response
-        self.block_size = response.block_size
+
+        # TODO: determine if block size should be public on RestAioHttpTransportResponse.
+        self.block_size = response._block_size  # pylint: disable=protected-access
         self._decompress = decompress
-        internal_response = response.internal_response
-        self.content_length = int(internal_response.headers.get("Content-Length", 0))
+        self.content_length = int(response.headers.get("Content-Length", 0))
         self._decompressor = None
 
     def __len__(self):
         return self.content_length
 
     async def __anext__(self):
-        internal_response = self.response.internal_response
         try:
-            chunk = await internal_response.content.read(self.block_size)
+            # TODO: Determine how chunks should be read.
+            # chunk = await self.response.internal_response.content.read(self.block_size)
+            chunk = await self.response._internal_response.content.read(
+                self.block_size
+            )  # pylint: disable=protected-access
             if not chunk:
                 raise _ResponseStopIteration()
             if not self._decompress:
                 return chunk
-            enc = internal_response.headers.get("Content-Encoding")
+            enc = self.response.headers.get("Content-Encoding")
             if not enc:
                 return chunk
             enc = enc.lower()
@@ -372,13 +299,13 @@ class AioHttpStreamDownloadGenerator(AsyncIterator):
                 chunk = self._decompressor.decompress(chunk)
             return chunk
         except _ResponseStopIteration:
-            internal_response.close()
+            self.response.close()
             raise StopAsyncIteration()  # pylint: disable=raise-missing-from
         except aiohttp.client_exceptions.ClientPayloadError as err:
             # This is the case that server closes connection before we finish the reading. aiohttp library
             # raises ClientPayloadError.
             _LOGGER.warning("Incomplete download: %s", err)
-            internal_response.close()
+            self.response.close()
             raise IncompleteReadError(err, error=err) from err
         except aiohttp.client_exceptions.ClientResponseError as err:
             raise ServiceResponseError(err, error=err) from err
@@ -388,131 +315,5 @@ class AioHttpStreamDownloadGenerator(AsyncIterator):
             raise ServiceRequestError(err, error=err) from err
         except Exception as err:
             _LOGGER.warning("Unable to stream download: %s", err)
-            internal_response.close()
+            self.response.close()
             raise
-
-
-class AioHttpTransportResponse(AsyncHttpResponse):
-    """Methods for accessing response body data.
-
-    :param request: The HttpRequest object
-    :type request: ~generic.core.pipeline.transport.HttpRequest
-    :param aiohttp_response: Returned from ClientSession.request().
-    :type aiohttp_response: aiohttp.ClientResponse object
-    :param block_size: block size of data sent over connection.
-    :type block_size: int
-    :keyword bool decompress: If True which is default, will attempt to decode the body based
-            on the *content-encoding* header.
-    """
-
-    def __init__(
-        self,
-        request: HttpRequest,
-        aiohttp_response: aiohttp.ClientResponse,
-        block_size: Optional[int] = None,
-        *,
-        decompress: bool = True,
-    ) -> None:
-        super(AioHttpTransportResponse, self).__init__(request, aiohttp_response, block_size=block_size)
-        # https://aiohttp.readthedocs.io/en/stable/client_reference.html#aiohttp.ClientResponse
-        self.status_code = aiohttp_response.status
-        self.headers = CIMultiDict(aiohttp_response.headers)
-        self.reason = aiohttp_response.reason
-        self.content_type = aiohttp_response.headers.get("content-type")
-        self._content = None
-        self._decompressed_content = False
-        self._decompress = decompress
-
-    def body(self) -> bytes:
-        """Return the whole body as bytes in memory.
-
-        :rtype: bytes
-        :return: The whole response body.
-        """
-        return _aiohttp_body_helper(self)
-
-    def text(self, encoding: Optional[str] = None) -> str:
-        """Return the whole body as a string.
-
-        If encoding is not provided, rely on aiohttp auto-detection.
-
-        :param str encoding: The encoding to apply.
-        :rtype: str
-        :return: The whole response body as a string.
-        """
-        # super().text detects charset based on self._content() which is compressed
-        # implement the decoding explicitly here
-        body = self.body()
-
-        ctype = self.headers.get(aiohttp.hdrs.CONTENT_TYPE, "").lower()
-        mimetype = aiohttp.helpers.parse_mimetype(ctype)
-
-        if not encoding:
-            # extract encoding from mimetype, if caller does not specify
-            encoding = mimetype.parameters.get("charset")
-        if encoding:
-            try:
-                codecs.lookup(encoding)
-            except LookupError:
-                encoding = None
-        if not encoding:
-            if mimetype.type == "application" and mimetype.subtype in ["json", "rdap"]:
-                # RFC 7159 states that the default encoding is UTF-8.
-                # RFC 7483 defines application/rdap+json
-                encoding = "utf-8"
-            elif body is None:
-                raise RuntimeError("Cannot guess the encoding of a not yet read body")
-            else:
-                try:
-                    import cchardet as chardet
-                except ImportError:  # pragma: no cover
-                    try:
-                        import chardet  # type: ignore
-                    except ImportError:  # pragma: no cover
-                        import charset_normalizer as chardet  # type: ignore[no-redef]
-                # While "detect" can return a dict of float, in this context this won't happen
-                # The cast is for pyright to be happy
-                encoding = cast(Optional[str], chardet.detect(body)["encoding"])
-        if encoding == "utf-8" or encoding is None:
-            encoding = "utf-8-sig"
-
-        return body.decode(encoding)
-
-    async def load_body(self) -> None:
-        """Load in memory the body, so it could be accessible from sync methods."""
-        try:
-            self._content = await self.internal_response.read()
-        except aiohttp.client_exceptions.ClientPayloadError as err:
-            # This is the case that server closes connection before we finish the reading. aiohttp library
-            # raises ClientPayloadError.
-            raise IncompleteReadError(err, error=err) from err
-        except aiohttp.client_exceptions.ClientResponseError as err:
-            raise ServiceResponseError(err, error=err) from err
-        except asyncio.TimeoutError as err:
-            raise ServiceResponseError(err, error=err) from err
-        except aiohttp.client_exceptions.ClientError as err:
-            raise ServiceRequestError(err, error=err) from err
-
-    def stream_download(
-        self, pipeline: AsyncPipeline[HttpRequest, AsyncHttpResponse], **kwargs
-    ) -> AsyncIteratorType[bytes]:
-        """Generator for streaming response body data.
-
-        :param pipeline: The pipeline object
-        :type pipeline: generic.core.pipeline.AsyncPipeline
-        :keyword bool decompress: If True which is default, will attempt to decode the body based
-            on the *content-encoding* header.
-        :rtype: AsyncIterator[bytes]
-        :return: An iterator of bytes chunks.
-        """
-        return AioHttpStreamDownloadGenerator(pipeline, self, **kwargs)
-
-    def __getstate__(self):
-        # Be sure body is loaded in memory, otherwise not pickable and let it throw
-        self.body()
-
-        state = self.__dict__.copy()
-        # Remove the unpicklable entries.
-        state["internal_response"] = None  # aiohttp response are not pickable (see headers comments)
-        state["headers"] = CIMultiDict(self.headers)  # MultiDictProxy is not pickable
-        return state

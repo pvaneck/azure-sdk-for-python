@@ -9,7 +9,6 @@ from __future__ import absolute_import
 from io import BytesIO
 from email.message import Message
 from email.policy import HTTP
-from email import message_from_bytes as message_parser
 import os
 from typing import (
     TYPE_CHECKING,
@@ -18,38 +17,18 @@ from typing import (
     Union,
     Tuple,
     Optional,
-    Callable,
-    Type,
-    Iterator,
-    List,
     Sequence,
 )
 from http.client import HTTPConnection
 from urllib.parse import urlparse
 
-from ..pipeline import (
-    PipelineRequest,
-    PipelineResponse,
-    PipelineContext,
-)
-from ..pipeline._tools import await_result as _await_result
-
 if TYPE_CHECKING:
     # importing both the py3 RestHttpRequest and the fallback RestHttpRequest
     from ..rest._rest_py3 import HttpRequest as RestHttpRequestPy3
-    from ..pipeline.transport import (
-        HttpRequest as PipelineTransportHttpRequest,
-    )
+    from ..rest._aiohttp import RestAioHttpTransportResponse
 
-    HTTPRequestType = Union[RestHttpRequestPy3, PipelineTransportHttpRequest]
-    from ..pipeline.policies import SansIOHTTPPolicy
-    from ..pipeline.transport import (  # pylint: disable=non-abstract-transport-import
-        HttpResponse as PipelineTransportHttpResponse,
-        AioHttpTransportResponse as PipelineTransportAioHttpTransportResponse,
-    )
-    from ..pipeline.transport._base import (
-        _HttpResponseBase as PipelineTransportHttpResponseBase,
-    )
+    HTTPRequestType = RestHttpRequestPy3
+
 
 binary_type = str
 
@@ -217,122 +196,6 @@ def _serialize_request(http_request: "HTTPRequestType") -> bytes:
     return serializer.buffer
 
 
-def _decode_parts_helper(
-    response: "PipelineTransportHttpResponseBase",
-    message: Message,
-    http_response_type: Type["PipelineTransportHttpResponseBase"],
-    requests: Sequence["PipelineTransportHttpRequest"],
-    deserialize_response: Callable,
-) -> List["PipelineTransportHttpResponse"]:
-    """Helper for _decode_parts.
-
-    Rebuild an HTTP response from pure string.
-
-    :param response: The response to decode
-    :type response: ~generic.core.pipeline.transport.HttpResponse
-    :param message: The message to decode
-    :type message: ~email.message.Message
-    :param http_response_type: The type of response to return
-    :type http_response_type: ~generic.core.pipeline.transport.HttpResponse
-    :param requests: The requests that were batched together
-    :type requests: list[~generic.core.pipeline.transport.HttpRequest]
-    :param deserialize_response: The function to deserialize the response
-    :type deserialize_response: callable
-    :rtype: list[~generic.core.pipeline.transport.HttpResponse]
-    :return: The list of responses
-    """
-    responses = []
-    for index, raw_response in enumerate(message.get_payload()):
-        content_type = raw_response.get_content_type()
-        if content_type == "application/http":
-            try:
-                matching_request = requests[index]
-            except IndexError:
-                # If we have no matching request, this could mean that we had an empty batch.
-                # The request object is only needed to get the HTTP METHOD and to store in the response object,
-                # so let's just use the parent request so allow the rest of the deserialization to continue.
-                matching_request = response.request
-            responses.append(
-                deserialize_response(
-                    raw_response.get_payload(decode=True),
-                    matching_request,
-                    http_response_type=http_response_type,
-                )
-            )
-        elif content_type == "multipart/mixed" and requests[index].multipart_mixed_info:
-            # The message batch contains one or more change sets
-            changeset_requests = requests[index].multipart_mixed_info[0]  # type: ignore
-            changeset_responses = response._decode_parts(  # pylint: disable=protected-access
-                raw_response, http_response_type, changeset_requests
-            )
-            responses.extend(changeset_responses)
-        else:
-            raise ValueError("Multipart doesn't support part other than application/http for now")
-    return responses
-
-
-def _get_raw_parts_helper(response, http_response_type: Type):
-    """Helper for _get_raw_parts
-
-    Assuming this body is multipart, return the iterator or parts.
-
-    If parts are application/http use http_response_type or HttpClientTransportResponse
-    as envelope.
-
-    :param response: The response to decode
-    :type response: ~generic.core.pipeline.transport.HttpResponse
-    :param http_response_type: The type of response to return
-    :type http_response_type: any
-    :rtype: iterator[~generic.core.pipeline.transport.HttpResponse]
-    :return: The parts of the response
-    """
-    body_as_bytes = response.body()
-    # In order to use email.message parser, I need full HTTP bytes. Faking something to make the parser happy
-    http_body = b"Content-Type: " + response.content_type.encode("ascii") + b"\r\n\r\n" + body_as_bytes
-    message: Message = message_parser(http_body)
-    requests = response.request.multipart_mixed_info[0]
-    return response._decode_parts(message, http_response_type, requests)  # pylint: disable=protected-access
-
-
-def _parts_helper(
-    response: "PipelineTransportHttpResponse",
-) -> Iterator["PipelineTransportHttpResponse"]:
-    """Assuming the content-type is multipart/mixed, will return the parts as an iterator.
-
-    :param response: The response to decode
-    :type response: ~generic.core.pipeline.transport.HttpResponse
-    :rtype: iterator[HttpResponse]
-    :return: The parts of the response
-    :raises ValueError: If the content is not multipart/mixed
-    """
-    if not response.content_type or not response.content_type.startswith("multipart/mixed"):
-        raise ValueError("You can't get parts if the response is not multipart/mixed")
-
-    responses = response._get_raw_parts()  # pylint: disable=protected-access
-    if response.request.multipart_mixed_info:
-        policies: Sequence["SansIOHTTPPolicy"] = response.request.multipart_mixed_info[1]
-
-        # Apply on_response concurrently to all requests
-        import concurrent.futures
-
-        def parse_responses(response):
-            http_request = response.request
-            context = PipelineContext(None)
-            pipeline_request = PipelineRequest(http_request, context)
-            pipeline_response = PipelineResponse(http_request, response, context=context)
-
-            for policy in policies:
-                _await_result(policy.on_response, pipeline_request, pipeline_response)
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            # List comprehension to raise exceptions if happened
-            [  # pylint: disable=expression-not-assigned, unnecessary-comprehension
-                _ for _ in executor.map(parse_responses, responses)
-            ]
-
-    return responses
-
-
 def _format_data_helper(data: Union[str, IO]) -> Union[Tuple[None, str], Tuple[Optional[str], IO, str]]:
     """Helper for _format_data.
 
@@ -357,7 +220,7 @@ def _format_data_helper(data: Union[str, IO]) -> Union[Tuple[None, str], Tuple[O
 
 
 def _aiohttp_body_helper(
-    response: "PipelineTransportAioHttpTransportResponse",
+    response: "RestAioHttpTransportResponse",
 ) -> bytes:
     # pylint: disable=protected-access
     """Helper for body method of Aiohttp responses.
