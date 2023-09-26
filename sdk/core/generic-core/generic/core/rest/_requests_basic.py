@@ -23,6 +23,7 @@
 # IN THE SOFTWARE.
 #
 # --------------------------------------------------------------------------
+from __future__ import annotations
 import logging
 import collections.abc as collections
 from typing import TYPE_CHECKING, Any
@@ -92,7 +93,7 @@ class _RestRequestsTransportResponseBase(_HttpResponseBaseImpl):
             reason=internal_response.reason,
             content_type=headers.get("content-type"),
             content=content,
-            **kwargs
+            **kwargs,
         )
 
 
@@ -112,7 +113,9 @@ class StreamDownloadGenerator:
         on the *content-encoding* header.
     """
 
-    def __init__(self, pipeline: Pipeline, response: RestRequestsTransportResponse, **kwargs: Any) -> None:
+    def __init__(
+        self, pipeline: Pipeline[HttpRequest, HttpResponse], response: RestRequestsTransportResponse, **kwargs: Any
+    ) -> None:
 
         self.pipeline = pipeline
         self.request = response.request

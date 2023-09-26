@@ -23,16 +23,30 @@
 # IN THE SOFTWARE.
 #
 # --------------------------------------------------------------------------
+from __future__ import annotations
 import collections.abc
 import asyncio
+import logging
 from itertools import groupby
-from typing import Iterator, cast
+from typing import Iterator, cast, TYPE_CHECKING
 from multidict import CIMultiDict
+import aiohttp.client_exceptions  # pylint: disable=networking-import-outside-azure-core-transport
 
 from ._http_response_impl_async import AsyncHttpResponseImpl
-from ..pipeline.transport._aiohttp import AioHttpStreamDownloadGenerator
 from ..utils._pipeline_transport_rest_shared import _aiohttp_body_helper
-from ..exceptions import ResponseNotReadError
+from ..exceptions import (
+    ResponseNotReadError,
+    ServiceRequestError,
+    ServiceResponseError,
+    IncompleteReadError,
+)
+from ..pipeline import AsyncPipeline
+from ..pipeline.transport._base_async import _ResponseStopIteration
+
+if TYPE_CHECKING:
+    from ..rest import HttpRequest, AsyncHttpResponse
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class _ItemsView(collections.abc.ItemsView):
@@ -193,3 +207,78 @@ class RestAioHttpTransportResponse(AsyncHttpResponseImpl):
             self._is_closed = True
             self._internal_response.close()
             await asyncio.sleep(0)
+
+
+class AioHttpStreamDownloadGenerator(collections.abc.AsyncIterator):
+    """Streams the response body data.
+
+    :param pipeline: The pipeline object
+    :type pipeline: ~generic.core.pipeline.AsyncPipeline
+    :param response: The client response object.
+    :type response: ~generic.core.rest.AsyncHttpResponse
+    :keyword bool decompress: If True which is default, will attempt to decode the body based
+        on the *content-encoding* header.
+    """
+
+    def __init__(
+        self,
+        pipeline: AsyncPipeline[HttpRequest, AsyncHttpResponse],
+        response: RestAioHttpTransportResponse,
+        *,
+        decompress: bool = True,
+    ) -> None:
+        self.pipeline = pipeline
+        self.request = response.request
+        self.response = response
+
+        # TODO: determine if block size should be public on RestAioHttpTransportResponse.
+        self.block_size = response._block_size  # pylint: disable=protected-access
+        self._decompress = decompress
+        self.content_length = int(response.headers.get("Content-Length", 0))
+        self._decompressor = None
+
+    def __len__(self):
+        return self.content_length
+
+    async def __anext__(self):
+        try:
+            # TODO: Determine how chunks should be read.
+            # chunk = await self.response.internal_response.content.read(self.block_size)
+            chunk = await self.response._internal_response.content.read(
+                self.block_size
+            )  # pylint: disable=protected-access
+            if not chunk:
+                raise _ResponseStopIteration()
+            if not self._decompress:
+                return chunk
+            enc = self.response.headers.get("Content-Encoding")
+            if not enc:
+                return chunk
+            enc = enc.lower()
+            if enc in ("gzip", "deflate"):
+                if not self._decompressor:
+                    import zlib
+
+                    zlib_mode = (16 + zlib.MAX_WBITS) if enc == "gzip" else -zlib.MAX_WBITS
+                    self._decompressor = zlib.decompressobj(wbits=zlib_mode)
+                chunk = self._decompressor.decompress(chunk)
+            return chunk
+        except _ResponseStopIteration:
+            self.response.close()
+            raise StopAsyncIteration()  # pylint: disable=raise-missing-from
+        except aiohttp.client_exceptions.ClientPayloadError as err:
+            # This is the case that server closes connection before we finish the reading. aiohttp library
+            # raises ClientPayloadError.
+            _LOGGER.warning("Incomplete download: %s", err)
+            self.response.close()
+            raise IncompleteReadError(err, error=err) from err
+        except aiohttp.client_exceptions.ClientResponseError as err:
+            raise ServiceResponseError(err, error=err) from err
+        except asyncio.TimeoutError as err:
+            raise ServiceResponseError(err, error=err) from err
+        except aiohttp.client_exceptions.ClientError as err:
+            raise ServiceRequestError(err, error=err) from err
+        except Exception as err:
+            _LOGGER.warning("Unable to stream download: %s", err)
+            self.response.close()
+            raise
