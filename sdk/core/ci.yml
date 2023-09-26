@@ -50,3 +50,5 @@ extends:
       skipPublishDocMs: true
     - name: azure-core-experimental
       safeName: azurecoreexperimental
+    - name: generic-core
+      safeName: generic-core

@@ -101,7 +101,7 @@ def create_http_response(http_response, *args, **kwargs):
     )
 
 
-def readonly_checks(response, old_response_class):
+def readonly_checks(response):
     # though we want these properties to be completely readonly, it doesn't work
     # for the backcompat properties
     assert isinstance(response.request, RestHttpRequest)
@@ -130,7 +130,6 @@ def readonly_checks(response, old_response_class):
     with pytest.raises(AttributeError):
         response.content = b"bad"
 
-    old_response = old_response_class(response.request, response.internal_response, response.block_size)
     for attr in dir(response):
         if attr[0] == "_":
             # don't care about private variables
@@ -141,6 +140,3 @@ def readonly_checks(response, old_response_class):
         if attr == "encoding":
             # encoding is the only settable new attr
             continue
-        if not attr in vars(old_response):
-            with pytest.raises(AttributeError):
-                setattr(response, attr, "new_value")

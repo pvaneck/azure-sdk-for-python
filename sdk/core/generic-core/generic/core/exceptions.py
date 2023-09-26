@@ -222,7 +222,7 @@ class HttpResponseError(ServiceError):
 
         # By priority, message is:
         # - parameter "message", OR
-        # - generic meassage using "reason"
+        # - generic message using "reason"
         message = message or "Operation returned an invalid status '{}'".format(self.reason)
         super(HttpResponseError, self).__init__(message=message, **kwargs)
 
