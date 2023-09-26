@@ -242,15 +242,17 @@ class AioHttpStreamDownloadGenerator(collections.abc.AsyncIterator):
 
     async def __anext__(self):
         try:
+            internal_response = self.response._internal_response  # pylint: disable=protected-access
             # TODO: Determine how chunks should be read.
             # chunk = await self.response.internal_response.content.read(self.block_size)
-            chunk = await self.response._internal_response.content.read(
+            chunk = await internal_response.content.read(
                 self.block_size
             )  # pylint: disable=protected-access
             if not chunk:
                 raise _ResponseStopIteration()
             if not self._decompress:
                 return chunk
+            # TODO: Determine if the following is equivalent to internal_response.headers.get("Content-Encoding")
             enc = self.response.headers.get("Content-Encoding")
             if not enc:
                 return chunk
@@ -264,13 +266,13 @@ class AioHttpStreamDownloadGenerator(collections.abc.AsyncIterator):
                 chunk = self._decompressor.decompress(chunk)
             return chunk
         except _ResponseStopIteration:
-            self.response.close()
+            internal_response.close()
             raise StopAsyncIteration()  # pylint: disable=raise-missing-from
         except aiohttp.client_exceptions.ClientPayloadError as err:
             # This is the case that server closes connection before we finish the reading. aiohttp library
             # raises ClientPayloadError.
             _LOGGER.warning("Incomplete download: %s", err)
-            self.response.close()
+            internal_response.close()
             raise IncompleteReadError(err, error=err) from err
         except aiohttp.client_exceptions.ClientResponseError as err:
             raise ServiceResponseError(err, error=err) from err
@@ -280,5 +282,5 @@ class AioHttpStreamDownloadGenerator(collections.abc.AsyncIterator):
             raise ServiceRequestError(err, error=err) from err
         except Exception as err:
             _LOGGER.warning("Unable to stream download: %s", err)
-            self.response.close()
+            internal_response.close()
             raise
