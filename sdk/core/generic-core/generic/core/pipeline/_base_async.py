@@ -30,7 +30,6 @@ from typing_extensions import AsyncContextManager
 
 from . import PipelineRequest, PipelineResponse, PipelineContext
 from .policies import AsyncHTTPPolicy, SansIOHTTPPolicy
-from ._tools import cleanup_kwargs_for_transport
 from ._tools_async import await_result as _await_result
 from .transport import AsyncHttpTransport
 
@@ -100,7 +99,6 @@ class _AsyncTransportRunner(
         :return: The PipelineResponse object.
         :rtype: ~generic.core.pipeline.PipelineResponse
         """
-        cleanup_kwargs_for_transport(request.context.options)
         return PipelineResponse(
             request.http_request,
             await self._sender.send(request.http_request, **request.context.options),

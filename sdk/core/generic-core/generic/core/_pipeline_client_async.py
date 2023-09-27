@@ -43,10 +43,7 @@ from .pipeline import AsyncPipeline
 from .pipeline.transport._base import PipelineClientBase
 from .pipeline.policies import (
     ContentDecodePolicy,
-    DistributedTracingPolicy,
-    RequestIdPolicy,
     AsyncRetryPolicy,
-    SensitiveHeaderCleanupPolicy,
 )
 
 
@@ -194,7 +191,6 @@ class AsyncPipelineClient(
 
         if policies is None:  # [] is a valid policy list
             policies = [
-                config.request_id_policy or RequestIdPolicy(**kwargs),
                 config.headers_policy,
                 config.user_agent_policy,
                 config.proxy_policy,
@@ -207,7 +203,6 @@ class AsyncPipelineClient(
 
             policies.extend(
                 [
-                    config.redirect_policy,
                     config.retry_policy,
                     config.authentication_policy,
                 ]
@@ -220,8 +215,6 @@ class AsyncPipelineClient(
             policies.extend(
                 [
                     config.logging_policy,
-                    DistributedTracingPolicy(**kwargs),
-                    SensitiveHeaderCleanupPolicy(**kwargs) if config.redirect_policy else None,
                 ]
             )
         else:
@@ -259,10 +252,7 @@ class AsyncPipelineClient(
         return AsyncPipeline[HTTPRequestType, AsyncHTTPResponseType](transport, policies)
 
     async def _make_pipeline_call(self, request: HTTPRequestType, **kwargs) -> AsyncHTTPResponseType:
-        return_pipeline_response = kwargs.pop("_return_pipeline_response", False)
-        pipeline_response = await self._pipeline.run(request, **kwargs)  # pylint: disable=protected-access
-        if return_pipeline_response:
-            return pipeline_response  # type: ignore  # This is a private API we don't want to type in signature
+        pipeline_response = await self._pipeline.run(request, **kwargs)
         return pipeline_response.http_response
 
     def send_request(

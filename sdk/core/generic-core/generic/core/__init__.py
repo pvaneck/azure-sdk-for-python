@@ -27,15 +27,3 @@
 from ._version import VERSION
 
 __version__ = VERSION
-
-from ._pipeline_client import PipelineClient
-from ._match_conditions import MatchConditions
-from ._enum_meta import CaseInsensitiveEnumMeta
-from ._pipeline_client_async import AsyncPipelineClient
-
-__all__ = [
-    "PipelineClient",
-    "MatchConditions",
-    "CaseInsensitiveEnumMeta",
-    "AsyncPipelineClient",
-]

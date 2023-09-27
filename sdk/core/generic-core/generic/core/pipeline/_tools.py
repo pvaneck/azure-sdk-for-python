@@ -24,7 +24,7 @@
 #
 # --------------------------------------------------------------------------
 from __future__ import annotations
-from typing import TYPE_CHECKING, Callable, TypeVar, Dict
+from typing import TYPE_CHECKING, Callable, TypeVar
 from typing_extensions import ParamSpec
 
 if TYPE_CHECKING:
@@ -66,22 +66,3 @@ def handle_non_stream_rest_response(response: HttpResponse) -> None:
     except Exception as exc:
         response.close()
         raise exc
-
-
-def cleanup_kwargs_for_transport(kwargs: Dict[str, str]) -> None:
-    """Remove kwargs that are not meant for the transport layer.
-    :param kwargs: The keyword arguments.
-    :type kwargs: dict
-
-    "insecure_domain_change" is used to indicate that a redirect
-      has occurred to a different domain. This tells the SensitiveHeaderCleanupPolicy
-      to clean up sensitive headers. We need to remove it before sending the request
-      to the transport layer. This code is needed to handle the case that the
-      SensitiveHeaderCleanupPolicy is not added into the pipeline and "insecure_domain_change" is not popped.
-    "enable_cae" is added to the `get_token` method of the `TokenCredential` protocol.
-    """
-    kwargs_to_remove = ["insecure_domain_change", "enable_cae"]
-    if not kwargs:
-        return
-    for key in kwargs_to_remove:
-        kwargs.pop(key, None)

@@ -50,15 +50,12 @@ class Configuration(Generic[HTTPRequestType, HTTPResponseType]):  # pylint: disa
 
     :ivar headers_policy: Provides parameters for custom or additional headers to be sent with the request.
     :ivar proxy_policy: Provides configuration parameters for proxy.
-    :ivar redirect_policy: Provides configuration parameters for redirects.
     :ivar retry_policy: Provides configuration parameters for retries in the pipeline.
     :ivar logging_policy: Provides configuration parameters for logging.
     :ivar user_agent_policy: Provides configuration parameters to append custom values to the
      User-Agent header.
     :ivar authentication_policy: Provides configuration parameters for adding a bearer token Authorization
      header to requests.
-    :ivar request_id_policy: Provides configuration parameters for adding a request id to requests.
-    :keyword polling_interval: Polling interval while doing LRO operations, if Retry-After is not set.
 
     .. admonition:: Example:
 
@@ -76,9 +73,6 @@ class Configuration(Generic[HTTPRequestType, HTTPResponseType]):  # pylint: disa
         # Proxy settings (Currently used to configure transport, could be pipeline policy instead)
         self.proxy_policy: Optional[AnyPolicy[HTTPRequestType, HTTPResponseType]] = None
 
-        # Redirect configuration
-        self.redirect_policy: Optional[AnyPolicy[HTTPRequestType, HTTPResponseType]] = None
-
         # Retry configuration
         self.retry_policy: Optional[AnyPolicy[HTTPRequestType, HTTPResponseType]] = None
 
@@ -90,12 +84,6 @@ class Configuration(Generic[HTTPRequestType, HTTPResponseType]):  # pylint: disa
 
         # Authentication configuration
         self.authentication_policy: Optional[AnyPolicy[HTTPRequestType, HTTPResponseType]] = None
-
-        # Request ID policy
-        self.request_id_policy: Optional[AnyPolicy[HTTPRequestType, HTTPResponseType]] = None
-
-        # Polling interval if no retry-after in polling calls results
-        self.polling_interval: float = kwargs.get("polling_interval", 30)
 
 
 class ConnectionConfiguration:

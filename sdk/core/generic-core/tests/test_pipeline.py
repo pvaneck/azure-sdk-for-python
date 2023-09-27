@@ -42,12 +42,8 @@ from generic.core import PipelineClient
 from generic.core.pipeline.policies import (
     SansIOHTTPPolicy,
     UserAgentPolicy,
-    DistributedTracingPolicy,
-    RedirectPolicy,
     RetryPolicy,
     HTTPPolicy,
-    SansIOHTTPPolicy,
-    SensitiveHeaderCleanupPolicy,
 )
 from generic.core.pipeline.transport._base import PipelineClientBase, _format_url_section
 from generic.core.pipeline.transport import (
@@ -57,7 +53,6 @@ from generic.core.pipeline.transport import (
 from utils import HTTP_REQUESTS
 
 from generic.core.exceptions import ServiceError
-from generic.core.pipeline._tools import cleanup_kwargs_for_transport
 
 
 @pytest.mark.parametrize("http_request", HTTP_REQUESTS)
@@ -96,7 +91,7 @@ def test_sans_io_exception(http_request):
 def test_requests_socket_timeout(http_request):
     conf = Configuration()
     request = http_request("GET", "https://bing.com")
-    policies = [UserAgentPolicy("myusergant"), RedirectPolicy()]
+    policies = [UserAgentPolicy("myusergant")]
     # Sometimes this will raise a read timeout, sometimes a socket timeout depending on timing.
     # Either way, the error should always be wrapped as an ServiceError to ensure it's caught
     # by the retry policy.
@@ -353,7 +348,7 @@ def test_add_custom_policy():
     assert pos_boo < pos_retry
     assert pos_foo > pos_retry
 
-    policies = [UserAgentPolicy(), RetryPolicy(), DistributedTracingPolicy()]
+    policies = [UserAgentPolicy(), RetryPolicy()]
     client = PipelineClient(base_url="test", policies=policies, per_call_policies=boo_policy)
     actual_policies = client._pipeline._impl_policies
     assert boo_policy == actual_policies[0]
@@ -381,20 +376,12 @@ def test_add_custom_policy():
     assert boo_policy == actual_policies[0]
     assert foo_policy == actual_policies[3]
 
-    policies = [UserAgentPolicy(), DistributedTracingPolicy()]
+    policies = [UserAgentPolicy()]
     with pytest.raises(ValueError):
         client = PipelineClient(base_url="test", policies=policies, per_retry_policies=foo_policy)
     with pytest.raises(ValueError):
         client = PipelineClient(base_url="test", policies=policies, per_retry_policies=[foo_policy])
 
-
-def test_no_cleanup_policy_when_redirect_policy_is_empty():
-    config = Configuration()
-    client = PipelineClient(base_url="test", config=config)
-    policies = client._pipeline._impl_policies
-    for policy in policies:
-        if isinstance(policy, SensitiveHeaderCleanupPolicy):
-            assert False
 
 
 @pytest.mark.parametrize("http_request", HTTP_REQUESTS)
@@ -402,7 +389,7 @@ def test_basic_requests(port, http_request):
 
     conf = Configuration()
     request = http_request("GET", "http://localhost:{}/basic/string".format(port))
-    policies = [UserAgentPolicy("myusergant"), RedirectPolicy()]
+    policies = [UserAgentPolicy("myusergant")]
     with Pipeline(RequestsTransport(), policies=policies) as pipeline:
         response = pipeline.run(request)
 
@@ -414,7 +401,7 @@ def test_basic_requests(port, http_request):
 def test_basic_options_requests(port, http_request):
 
     request = http_request("OPTIONS", "http://localhost:{}/basic/string".format(port))
-    policies = [UserAgentPolicy("myusergant"), RedirectPolicy()]
+    policies = [UserAgentPolicy("myusergant")]
     with Pipeline(RequestsTransport(), policies=policies) as pipeline:
         response = pipeline.run(request)
 
@@ -427,7 +414,7 @@ def test_basic_requests_separate_session(port, http_request):
 
     session = requests.Session()
     request = http_request("GET", "http://localhost:{}/basic/string".format(port))
-    policies = [UserAgentPolicy("myusergant"), RedirectPolicy()]
+    policies = [UserAgentPolicy("myusergant")]
     transport = RequestsTransport(session=session, session_owner=False)
     with Pipeline(transport, policies=policies) as pipeline:
         response = pipeline.run(request)
@@ -451,10 +438,3 @@ def test_request_text(port, http_request):
 
     # We want a direct string
     assert request.data == "foo"
-
-
-def test_cleanup_kwargs():
-    kwargs = {"insecure_domain_change": True, "enable_cae": True}
-    cleanup_kwargs_for_transport(kwargs)
-    assert "insecure_domain_change" not in kwargs
-    assert "enable_cae" not in kwargs

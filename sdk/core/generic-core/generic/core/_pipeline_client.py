@@ -33,10 +33,7 @@ from .pipeline.transport._base import PipelineClientBase
 from .pipeline.transport import HttpTransport
 from .pipeline.policies import (
     ContentDecodePolicy,
-    DistributedTracingPolicy,
-    RequestIdPolicy,
     RetryPolicy,
-    SensitiveHeaderCleanupPolicy,
 )
 
 HTTPResponseType = TypeVar("HTTPResponseType")
@@ -111,7 +108,6 @@ class PipelineClient(PipelineClientBase, Generic[HTTPRequestType, HTTPResponseTy
 
         if policies is None:  # [] is a valid policy list
             policies = [
-                config.request_id_policy or RequestIdPolicy(**kwargs),
                 config.headers_policy,
                 config.user_agent_policy,
                 config.proxy_policy,
@@ -124,7 +120,6 @@ class PipelineClient(PipelineClientBase, Generic[HTTPRequestType, HTTPResponseTy
 
             policies.extend(
                 [
-                    config.redirect_policy,
                     config.retry_policy,
                     config.authentication_policy,
                 ]
@@ -137,8 +132,6 @@ class PipelineClient(PipelineClientBase, Generic[HTTPRequestType, HTTPResponseTy
             policies.extend(
                 [
                     config.logging_policy,
-                    DistributedTracingPolicy(**kwargs),
-                    SensitiveHeaderCleanupPolicy(**kwargs) if config.redirect_policy else None,
                 ]
             )
         else:
@@ -192,8 +185,5 @@ class PipelineClient(PipelineClientBase, Generic[HTTPRequestType, HTTPResponseTy
         :rtype: ~generic.core.rest.HttpResponse
         """
         stream = kwargs.pop("stream", False)  # want to add default value
-        return_pipeline_response = kwargs.pop("_return_pipeline_response", False)
-        pipeline_response = self._pipeline.run(request, stream=stream, **kwargs)  # pylint: disable=protected-access
-        if return_pipeline_response:
-            return pipeline_response  # type: ignore  # This is a private API we don't want to type in signature
+        pipeline_response = self._pipeline.run(request, stream=stream, **kwargs)
         return pipeline_response.http_response

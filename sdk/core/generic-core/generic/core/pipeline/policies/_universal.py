@@ -34,7 +34,6 @@ import platform
 import xml.etree.ElementTree as ET
 import types
 import re
-import uuid
 from typing import IO, cast, Union, Optional, AnyStr, Dict, Any, Set, Mapping
 
 from ... import __version__ as core_version
@@ -109,73 +108,6 @@ class HeadersPolicy(SansIOHTTPPolicy[HTTPRequestType, HTTPResponseType]):
 
 class _Unset:
     pass
-
-
-class RequestIdPolicy(SansIOHTTPPolicy[HTTPRequestType, HTTPResponseType]):
-    """A simple policy that sets the given request id in the header.
-
-    This will overwrite request id that is already defined in the request. Request id can be
-    configured up front, where the request id will be applied to all outgoing
-    operations, and additional request id can also be set dynamically per operation.
-
-    :keyword str request_id: The request id to be added into header.
-    :keyword bool auto_request_id: Auto generates a unique request ID per call if true which is by default.
-    :keyword str request_id_header_name: Header name to use. Default is "x-request-id".
-
-    .. admonition:: Example:
-
-        .. literalinclude:: ../samples/test_example_sansio.py
-            :start-after: [START request_id_policy]
-            :end-before: [END request_id_policy]
-            :language: python
-            :dedent: 4
-            :caption: Configuring a request id policy.
-    """
-
-    def __init__(
-        self,  # pylint: disable=unused-argument
-        *,
-        request_id: Union[str, Any] = _Unset,
-        auto_request_id: bool = True,
-        request_id_header_name: str = "x-request-id",
-        **kwargs: Any
-    ) -> None:
-        super()
-        self._request_id = request_id
-        self._auto_request_id = auto_request_id
-        self._request_id_header_name = request_id_header_name
-
-    def set_request_id(self, value: str) -> None:
-        """Add the request id to the configuration to be applied to all requests.
-
-        :param str value: The request id value.
-        """
-        self._request_id = value
-
-    def on_request(self, request: PipelineRequest[HTTPRequestType]) -> None:
-        """Updates with the given request id before sending the request to the next policy.
-
-        :param request: The PipelineRequest object
-        :type request: ~generic.core.pipeline.PipelineRequest
-        """
-        request_id = unset = object()
-        if "request_id" in request.context.options:
-            request_id = request.context.options.pop("request_id")
-            if request_id is None:
-                return
-        elif self._request_id is None:
-            return
-        elif self._request_id is not _Unset:
-            if self._request_id_header_name in request.http_request.headers:
-                return
-            request_id = self._request_id
-        elif self._auto_request_id:
-            if self._request_id_header_name in request.http_request.headers:
-                return
-            request_id = str(uuid.uuid1())
-        if request_id is not unset:
-            header = {self._request_id_header_name: cast(str, request_id)}
-            request.http_request.headers.update(header)
 
 
 class UserAgentPolicy(SansIOHTTPPolicy[HTTPRequestType, HTTPResponseType]):

@@ -31,7 +31,6 @@ from typing import (
     Any,
     Optional,
     Type,
-    List,
     Mapping,
     TypeVar,
     Generic,
@@ -59,7 +58,6 @@ __all__ = [
     "ClientAuthenticationError",
     "ResourceModifiedError",
     "ResourceNotModifiedError",
-    "TooManyRedirectsError",
     "StreamConsumedError",
     "StreamClosedError",
     "ResponseNotReadError",
@@ -268,21 +266,6 @@ class ResourceModifiedError(HttpResponseError):
 class ResourceNotModifiedError(HttpResponseError):
     """An error response with status code 304.
     This will not be raised directly by the core pipeline."""
-
-
-class TooManyRedirectsError(HttpResponseError, Generic[HTTPRequestType, HTTPResponseType]):
-    """Reached the maximum number of redirect attempts.
-
-    :param history: The history of requests made while trying to fulfill the request.
-    :type history: list[~generic.core.pipeline.policies.RequestHistory]
-    """
-
-    def __init__(
-        self, history: "List[RequestHistory[HTTPRequestType, HTTPResponseType]]", *args: Any, **kwargs: Any
-    ) -> None:
-        self.history = history
-        message = "Reached maximum redirect attempts."
-        super(TooManyRedirectsError, self).__init__(message, *args, **kwargs)
 
 
 class StreamConsumedError(ServiceError):

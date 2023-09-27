@@ -125,7 +125,7 @@ class SansIOHTTPPolicy(Generic[HTTPRequestType, HTTPResponseType]):
 class RequestHistory(Generic[HTTPRequestType, HTTPResponseType]):
     """A container for an attempted request and the applicable response.
 
-    This is used to document requests/responses that resulted in redirected/retried requests.
+    This is used to document requests/responses that resulted in retried requests.
 
     :param http_request: The request.
     :type http_request: ~generic.core.rest.HttpRequest

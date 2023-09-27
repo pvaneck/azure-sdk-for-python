@@ -29,22 +29,17 @@ from ._authentication import (
     BearerTokenCredentialPolicy,
     ServiceKeyCredentialPolicy,
 )
-from ._redirect import RedirectPolicy
 from ._retry import RetryPolicy, RetryMode
-from ._distributed_tracing import DistributedTracingPolicy
 from ._universal import (
     HeadersPolicy,
     UserAgentPolicy,
     NetworkTraceLoggingPolicy,
     ContentDecodePolicy,
     ProxyPolicy,
-    RequestIdPolicy,
 )
 from ._base_async import AsyncHTTPPolicy
 from ._authentication_async import AsyncBearerTokenCredentialPolicy
-from ._redirect_async import AsyncRedirectPolicy
 from ._retry_async import AsyncRetryPolicy
-from ._sensitive_header_cleanup_policy import SensitiveHeaderCleanupPolicy
 
 __all__ = [
     "HTTPPolicy",
@@ -57,14 +52,9 @@ __all__ = [
     "ContentDecodePolicy",
     "RetryMode",
     "RetryPolicy",
-    "RedirectPolicy",
     "ProxyPolicy",
-    "DistributedTracingPolicy",
     "RequestHistory",
-    "RequestIdPolicy",
     "AsyncHTTPPolicy",
     "AsyncBearerTokenCredentialPolicy",
-    "AsyncRedirectPolicy",
     "AsyncRetryPolicy",
-    "SensitiveHeaderCleanupPolicy",
 ]
