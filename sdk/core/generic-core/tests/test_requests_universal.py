@@ -26,7 +26,7 @@
 import concurrent.futures
 import requests.utils
 import pytest
-from generic.core.pipeline.transport import RequestsTransport
+from generic.core.pipeline.transport.requests import RequestsTransport
 from utils import HTTP_REQUESTS, REQUESTS_TRANSPORT_RESPONSES, create_transport_response
 
 

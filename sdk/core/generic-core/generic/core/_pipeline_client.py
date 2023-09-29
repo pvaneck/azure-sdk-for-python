@@ -163,7 +163,7 @@ class PipelineClient(PipelineClientBase, Generic[HTTPRequestType, HTTPResponseTy
 
         if transport is None:
             # Use private import for better typing, mypy and pyright don't like PEP562
-            from .pipeline.transport._requests_basic import RequestsTransport
+            from .pipeline.transport.requests import RequestsTransport
 
             transport = RequestsTransport(**kwargs)
 

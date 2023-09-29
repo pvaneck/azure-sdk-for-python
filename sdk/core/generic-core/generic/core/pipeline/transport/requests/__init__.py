@@ -23,33 +23,8 @@
 # IN THE SOFTWARE.
 #
 # --------------------------------------------------------------------------
-from typing import Optional, Type
-from types import TracebackType
 from ._requests_basic import RequestsTransport
-from ._base_async import AsyncHttpTransport
 
-
-class RequestsAsyncTransportBase(RequestsTransport, AsyncHttpTransport):  # type: ignore
-    async def _retrieve_request_data(self, request):
-        if hasattr(request.data, "__aiter__"):
-            # Need to consume that async generator, since requests can't do anything with it
-            # That's not ideal, but a list is our only choice. Memory not optimal here,
-            # but providing an async generator to a requests based transport is not optimal too
-            new_data = []
-            async for part in request.data:
-                new_data.append(part)
-            data_to_send = iter(new_data)
-        else:
-            data_to_send = request.data
-        return data_to_send
-
-    async def __aenter__(self):
-        return super(RequestsAsyncTransportBase, self).__enter__()
-
-    async def __aexit__(
-        self,
-        exc_type: Optional[Type[BaseException]] = None,
-        exc_value: Optional[BaseException] = None,
-        traceback: Optional[TracebackType] = None,
-    ):
-        return super(RequestsAsyncTransportBase, self).__exit__(exc_type, exc_value, traceback)
+__all__ = [
+    "RequestsTransport",
+]

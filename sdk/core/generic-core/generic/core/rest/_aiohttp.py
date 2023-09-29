@@ -33,7 +33,6 @@ from multidict import CIMultiDict
 import aiohttp.client_exceptions  # pylint: disable=networking-import-outside-azure-core-transport
 
 from ._http_response_impl_async import AsyncHttpResponseImpl
-from ..utils._pipeline_transport_rest_shared import _aiohttp_body_helper
 from ..exceptions import (
     ResponseNotReadError,
     ServiceRequestError,
@@ -47,6 +46,40 @@ if TYPE_CHECKING:
     from ..rest import HttpRequest, AsyncHttpResponse
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _aiohttp_content_helper(response: "RestAioHttpTransportResponse") -> bytes:
+    # pylint: disable=protected-access
+    """Helper for body method of Aiohttp responses.
+
+    Since aiohttp body methods need decompression work synchronously,
+    need to share this code across old and new aiohttp transport responses
+    for backcompat.
+
+    :param response: The response to decode
+    :type response: ~generic.core.rest.RestAioHttpTransportResponse
+    :rtype: bytes
+    :return: The response's bytes
+    """
+    if response._content is None:
+        raise ValueError("Content is not available. Call async method read, or do your call with stream=False.")
+    if not response._decompress:
+        return response._content
+    if response._decompressed_content:
+        return response._content
+    enc = response.headers.get("Content-Encoding")
+    if not enc:
+        return response._content
+    enc = enc.lower()
+    if enc in ("gzip", "deflate"):
+        import zlib
+
+        zlib_mode = (16 + zlib.MAX_WBITS) if enc == "gzip" else -zlib.MAX_WBITS
+        decompressor = zlib.decompressobj(wbits=zlib_mode)
+        response._content = decompressor.decompress(response._content)
+        response._decompressed_content = True
+        return response._content
+    return response._content
 
 
 class _ItemsView(collections.abc.ItemsView):
@@ -183,7 +216,7 @@ class RestAioHttpTransportResponse(AsyncHttpResponseImpl):
         """
         if self._content is None:
             raise ResponseNotReadError(self)
-        return _aiohttp_body_helper(self)
+        return _aiohttp_content_helper(self)
 
     async def read(self) -> bytes:
         """Read the response's bytes into memory.
@@ -195,7 +228,7 @@ class RestAioHttpTransportResponse(AsyncHttpResponseImpl):
             self._stream_download_check()
             self._content = await self._internal_response.read()
         await self._set_read_checks()
-        return _aiohttp_body_helper(self)
+        return _aiohttp_content_helper(self)
 
     async def close(self) -> None:
         """Close the response.

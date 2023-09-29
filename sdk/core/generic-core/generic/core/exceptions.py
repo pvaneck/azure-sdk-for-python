@@ -38,8 +38,6 @@ from typing import (
 )
 from typing_extensions import Protocol, runtime_checkable
 
-if TYPE_CHECKING:
-    from .pipeline.policies import RequestHistory
 
 HTTPResponseType = TypeVar("HTTPResponseType")
 HTTPRequestType = TypeVar("HTTPRequestType")

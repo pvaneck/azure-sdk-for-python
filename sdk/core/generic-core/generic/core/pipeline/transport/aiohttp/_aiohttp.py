@@ -33,19 +33,19 @@ import asyncio
 import aiohttp  # pylint: disable=networking-import-outside-azure-core-transport
 import aiohttp.client_exceptions  # pylint: disable=networking-import-outside-azure-core-transport
 
-from ...configuration import ConnectionConfiguration
-from ...exceptions import (
+from ....configuration import ConnectionConfiguration
+from ....exceptions import (
     ServiceRequestError,
     ServiceResponseError,
 )
-from ._base_async import AsyncHttpTransport
-from ...rest._aiohttp import RestAioHttpTransportResponse
-from .._tools_async import (
+from .._base_async import AsyncHttpTransport
+from ....rest._aiohttp import RestAioHttpTransportResponse
+from ..._tools_async import (
     handle_no_stream_rest_response as _handle_no_stream_rest_response,
 )
 
 if TYPE_CHECKING:
-    from ...rest import (
+    from ....rest import (
         HttpRequest as RestHttpRequest,
         AsyncHttpResponse as RestAsyncHttpResponse,
     )

@@ -245,7 +245,7 @@ class AsyncPipelineClient(
 
         if not transport:
             # Use private import for better typing, mypy and pyright don't like PEP562
-            from .pipeline.transport._aiohttp import AioHttpTransport
+            from .pipeline.transport.aiohttp import AioHttpTransport
 
             transport = AioHttpTransport(**kwargs)
 

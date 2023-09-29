@@ -23,45 +23,10 @@
 # IN THE SOFTWARE.
 #
 # --------------------------------------------------------------------------
-from typing import List, Optional, Any
 from ._base import HttpTransport
 from ._base_async import AsyncHttpTransport
 
-# pylint: disable=undefined-all-variable
-
 __all__ = [
     "HttpTransport",
-    "RequestsTransport",
     "AsyncHttpTransport",
-    "AioHttpTransport",
 ]
-
-# pylint: disable=unused-import, redefined-outer-name, no-member, too-many-statements, too-many-branches
-
-
-def __dir__() -> List[str]:
-    return __all__
-
-
-# To do nice overloads, need https://github.com/python/mypy/issues/8203
-
-
-def __getattr__(name: str):
-    transport: Optional[Any] = None
-    if name == "RequestsTransport":
-        try:
-            from ._requests_basic import RequestsTransport
-
-            transport = RequestsTransport
-        except ImportError as err:
-            raise ImportError("requests package is not installed") from err
-    if name == "AioHttpTransport":
-        try:
-            from ._aiohttp import AioHttpTransport
-
-            transport = AioHttpTransport
-        except ImportError as err:
-            raise ImportError("aiohttp package is not installed") from err
-    if transport:
-        return transport
-    raise AttributeError(f"module 'generic.core.pipeline.transport' has no attribute {name}")

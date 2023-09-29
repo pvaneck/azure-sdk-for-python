@@ -33,23 +33,23 @@ from urllib3.exceptions import (
 )
 import requests  # pylint: disable=networking-import-outside-azure-core-transport
 
-from ...configuration import ConnectionConfiguration
-from ...exceptions import (
+from ....configuration import ConnectionConfiguration
+from ....exceptions import (
     ServiceRequestError,
     ServiceResponseError,
     IncompleteReadError,
     HttpResponseError,
 )
 
-from ._base import HttpTransport
+from .._base import HttpTransport
 from ._bigger_block_size_http_adapters import BiggerBlockSizeHTTPAdapter
-from ...rest._requests_basic import RestRequestsTransportResponse
-from .._tools import (
+from ....rest._requests_basic import RestRequestsTransportResponse
+from ..._tools import (
     handle_non_stream_rest_response as _handle_non_stream_rest_response,
 )
 
 if TYPE_CHECKING:
-    from ...rest import HttpRequest as RestHttpRequest, HttpResponse as RestHttpResponse
+    from ....rest import HttpRequest as RestHttpRequest, HttpResponse as RestHttpResponse
 
 ServiceErrorUnion = Union[
     ServiceRequestError,

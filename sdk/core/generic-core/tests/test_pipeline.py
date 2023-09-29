@@ -46,10 +46,8 @@ from generic.core.pipeline.policies import (
     HTTPPolicy,
 )
 from generic.core.pipeline.transport._base import PipelineClientBase, _format_url_section
-from generic.core.pipeline.transport import (
-    HttpTransport,
-    RequestsTransport,
-)
+from generic.core.pipeline.transport import HttpTransport
+from generic.core.pipeline.transport.requests import RequestsTransport
 from utils import HTTP_REQUESTS
 
 from generic.core.exceptions import ServiceError

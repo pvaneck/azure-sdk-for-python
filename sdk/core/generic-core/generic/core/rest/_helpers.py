@@ -28,6 +28,7 @@ import copy
 import codecs
 import email.message
 from json import dumps
+import os
 from typing import (
     Optional,
     Union,
@@ -51,7 +52,6 @@ from ..utils._pipeline_transport_rest_shared import (
     _pad_attr_name,
     _prepare_multipart_body_helper,
     _serialize_request,
-    _format_data_helper,
 )
 
 if TYPE_CHECKING:
@@ -83,6 +83,29 @@ def _verify_data_object(name, value):
         raise TypeError("Invalid type for data name. Expected str, got {}: {}".format(type(name), name))
     if value is not None and not isinstance(value, (str, bytes, int, float)):
         raise TypeError("Invalid type for data value. Expected primitive type, got {}: {}".format(type(name), name))
+
+
+def _format_data_helper(data: Union[str, IO]) -> Union[Tuple[None, str], Tuple[Optional[str], IO, str]]:
+    """Helper for _format_data.
+
+    Format field data according to whether it is a stream or
+    a string for a form-data request.
+
+    :param data: The request field data.
+    :type data: str or file-like object.
+    :rtype: tuple[str, IO, str] or tuple[None, str]
+    :return: A tuple of (data name, data IO, "application/octet-stream") or (None, data str)
+    """
+    if hasattr(data, "read"):
+        data = cast(IO, data)
+        data_name = None
+        try:
+            if data.name[0] != "<" and data.name[-1] != ">":
+                data_name = os.path.basename(data.name)
+        except (AttributeError, TypeError):
+            pass
+        return (data_name, data, "application/octet-stream")
+    return (None, cast(str, data))
 
 
 def set_urlencoded_body(data, has_files):
