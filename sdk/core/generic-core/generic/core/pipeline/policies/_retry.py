@@ -302,20 +302,20 @@ class RetryPolicyBase:
         if self.is_exhausted(settings):
             return False
 
-        if response.http_request.body and hasattr(response.http_request.body, "read"):
+        if response.http_request.content and hasattr(response.http_request.content, "read"):
             if "body_position" not in settings:
                 return False
             try:
                 # attempt to rewind the body to the initial position
                 # If it has "read", it has "seek", so casting for mypy
-                cast(IO[bytes], response.http_request.body).seek(settings["body_position"], SEEK_SET)
+                cast(IO[bytes], response.http_request.content).seek(settings["body_position"], SEEK_SET)
             except (UnsupportedOperation, ValueError, AttributeError):
                 # if body is not seekable, then retry would not work
                 return False
         file_positions = settings.get("file_positions")
-        if response.http_request.files and file_positions:
+        if response.http_request._files and file_positions:
             try:
-                for value in response.http_request.files.values():
+                for value in response.http_request._files.values():
                     file_name, body = value[0], value[1]
                     if file_name in file_positions:
                         position = file_positions[file_name]
@@ -369,18 +369,18 @@ class RetryPolicyBase:
     def _configure_positions(self, request: PipelineRequest[HTTPRequestType], retry_settings: Dict[str, Any]) -> None:
         body_position = None
         file_positions: Optional[Dict[str, int]] = None
-        if request.http_request.body and hasattr(request.http_request.body, "read"):
+        if request.http_request.content and hasattr(request.http_request.content, "read"):
             try:
                 # If it has "read", it has "tell", so casting for mypy
-                body_position = cast(IO[bytes], request.http_request.body).tell()
+                body_position = cast(IO[bytes], request.http_request.content).tell()
             except (AttributeError, UnsupportedOperation):
                 # if body position cannot be obtained, then retries will not work
                 pass
         else:
-            if request.http_request.files:
+            if request.http_request._files:
                 file_positions = {}
                 try:
-                    for value in request.http_request.files.values():
+                    for value in request.http_request._files.values():
                         name, body = value[0], value[1]
                         if name and body and hasattr(body, "read"):
                             # If it has "read", it has "tell", so casting for mypy

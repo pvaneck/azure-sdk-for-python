@@ -146,7 +146,7 @@ class AioHttpTransport(AsyncHttpTransport):
             return ssl_ctx
         return verify
 
-    def _get_request_data(self, request):
+    def _get_request_data(self, request: RestHttpRequest):
         """Get the request data.
 
         :param request: The request object
@@ -154,16 +154,16 @@ class AioHttpTransport(AsyncHttpTransport):
         :rtype: bytes or ~aiohttp.FormData
         :return: The request data
         """
-        if request.files:
+        if request._files:
             form_data = aiohttp.FormData()
-            for form_file, data in request.files.items():
+            for form_file, data in request._files.items():
                 content_type = data[2] if len(data) > 2 else None
                 try:
                     form_data.add_field(form_file, data[1], filename=data[0], content_type=content_type)
                 except IndexError as err:
                     raise ValueError("Invalid formdata formatting: {}".format(data)) from err
             return form_data
-        return request.data
+        return request._data
 
     async def send(self, request: RestHttpRequest, **config) -> RestAsyncHttpResponse:
         """Send the request using this HTTP sender.
@@ -206,7 +206,7 @@ class AioHttpTransport(AsyncHttpTransport):
         # If we know for sure there is not body, disable "auto content type"
         # Otherwise, aiohttp will send "application/octet-stream" even for empty POST request
         # and that break services like storage signature
-        if not request.data and not request.files:
+        if not request.content:
             config["skip_auto_headers"] = ["Content-Type"]
         try:
             stream_response = config.pop("stream", False)

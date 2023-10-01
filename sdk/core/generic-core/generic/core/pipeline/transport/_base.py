@@ -185,31 +185,48 @@ class PipelineClientBase:
         :return: An HttpRequest object
         :rtype: ~generic.core.rest.HttpRequest
         """
-        request = HttpRequest(method, self.format_url(url), params=params)
+        request = HttpRequest(
+            method,
+            self.format_url(url),
+            params=params,
+            headers=headers,
+            content=content,
+        )
 
-        if headers:
-            request.headers.update(headers)
+        req_content, req_json, req_data, req_files = None, None, None, None
+        content_type = headers.pop("Content-Type", None) if headers else None
 
         if content is not None:
-            content_type = request.headers.get("Content-Type")
             if isinstance(content, ET.Element):
-                request.set_xml_body(content)
+                req_content = content
             # https://github.com/Azure/azure-sdk-for-python/issues/12137
             # A string is valid JSON, make the difference between text
             # and a plain JSON string.
             # Content-Type is a good indicator of intent from user
             elif content_type and content_type.startswith("text/"):
-                request.set_text_body(content)
+                req_content = content
             else:
-                try:
-                    request.set_json_body(content)
-                except TypeError:
-                    request.data = content
+                # Assume json
+                req_json = content
 
         if form_content:
-            request.set_formdata_body(form_content)
+            if content_type and content_type.lower() == "application/x-www-form-urlencoded":
+                req_data = form_content
+            else:  # Assume "multipart/form-data"
+                req_files = form_content
         elif stream_content:
-            request.set_streamed_data_body(stream_content)
+            req_content = stream_content
+
+        request = HttpRequest(
+            method,
+            self.format_url(url),
+            params=params,
+            headers=headers,
+            # content=req_content,
+            # json=req_json,
+            # data=req_data,
+            # files=req_files,
+        )
 
         return request
 
