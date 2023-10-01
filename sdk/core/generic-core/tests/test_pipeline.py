@@ -189,91 +189,71 @@ def test_format_incorrect_endpoint():
 @pytest.mark.parametrize("http_request", HTTP_REQUESTS)
 def test_request_json(http_request):
 
-    request = http_request("GET", "/")
     data = "Lots of dataaaa"
-    request.set_json_body(data)
+    request = http_request("GET", "/", json=data)
 
-    assert request.data == json.dumps(data)
+    assert request.content == json.dumps(data)
     assert request.headers.get("Content-Length") == "17"
 
 
 @pytest.mark.parametrize("http_request", HTTP_REQUESTS)
 def test_request_data(http_request):
 
-    request = http_request("GET", "/")
     data = "Lots of dataaaa"
-    request.set_bytes_body(data)
+    request = http_request("GET", "/", content=data)
 
-    assert request.data == data
+    assert request.content == data
     assert request.headers.get("Content-Length") == "15"
 
 
 @pytest.mark.parametrize("http_request", HTTP_REQUESTS)
 def test_request_stream(http_request):
-    request = http_request("GET", "/")
-
     data = b"Lots of dataaaa"
-    request.set_streamed_data_body(data)
-    assert request.data == data
+    request = http_request("GET", "/", content=data)
+    assert request.content == data
 
     def data_gen():
         for i in range(10):
             yield i
 
     data = data_gen()
-    request.set_streamed_data_body(data)
-    assert request.data == data
+    request = http_request("GET", "/", content=data)
+    assert request.content == data
 
     data = BytesIO(b"Lots of dataaaa")
-    request.set_streamed_data_body(data)
-    assert request.data == data
+    request = http_request("GET", "/", content=data)
+    assert request.content == data
 
 
 @pytest.mark.parametrize("http_request", HTTP_REQUESTS)
 def test_request_xml(http_request):
-    request = http_request("GET", "/")
     data = ET.Element("root")
-    request.set_xml_body(data)
-
-    assert request.data == b"<?xml version='1.0' encoding='utf-8'?>\n<root />"
+    request = http_request("GET", "/", content=data)
+    assert request.content == b"<?xml version='1.0' encoding='utf-8'?>\n<root />"
 
 
 @pytest.mark.parametrize("http_request", HTTP_REQUESTS)
 def test_request_url_with_params(http_request):
-
-    request = http_request("GET", "/")
-    request.url = "a/b/c?t=y"
-    request.format_parameters({"g": "h"})
-
+    request = http_request("GET", "a/b/c?t=y", params={"g": "h"})
     assert request.url in ["a/b/c?g=h&t=y", "a/b/c?t=y&g=h"]
 
 
 @pytest.mark.parametrize("http_request", HTTP_REQUESTS)
 def test_request_url_with_params_as_list(http_request):
-
-    request = http_request("GET", "/")
-    request.url = "a/b/c?t=y"
-    request.format_parameters({"g": ["h", "i"]})
-
+    request = http_request("GET", "a/b/c?t=y", params={"g": ["h", "i"]})
     assert request.url in ["a/b/c?g=h&g=i&t=y", "a/b/c?t=y&g=h&g=i"]
 
 
 @pytest.mark.parametrize("http_request", HTTP_REQUESTS)
 def test_request_url_with_params_with_none_in_list(http_request):
-
-    request = http_request("GET", "/")
-    request.url = "a/b/c?t=y"
     with pytest.raises(ValueError):
-        request.format_parameters({"g": ["h", None]})
+        http_request("GET", "a/b/c?t=y", params={"g": ["h", None]})
 
 
 @pytest.mark.parametrize("http_request", HTTP_REQUESTS)
 def test_request_url_with_params_with_none(http_request):
-
-    request = http_request("GET", "/")
-    request.url = "a/b/c?t=y"
     with pytest.raises(ValueError):
-        request.format_parameters({"g": None})
+        http_request("GET", "a/b/c?t=y", params={"g": None})
 
 
 @pytest.mark.parametrize("http_request", HTTP_REQUESTS)
@@ -430,9 +410,9 @@ def test_request_text(port, http_request):
     request = http_request("GET", "/", json="foo")
 
     # In absence of information, everything is JSON (double quote added)
-    assert request.data == json.dumps("foo")
+    assert request.content == json.dumps("foo")
 
     request = http_request("POST", "/", headers={"content-type": "text/whatever"}, content="foo")
 
     # We want a direct string
-    assert request.data == "foo"
+    assert request.content == "foo"

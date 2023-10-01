@@ -114,6 +114,8 @@ class _TransportRunner(HTTPPolicy[HTTPRequestType, HTTPResponseType]):
         :rtype: ~azure.core.pipeline.PipelineResponse
         """
         cleanup_kwargs_for_transport(request.context.options)
+        print('---in transport runner---')
+        print(request.http_request.files)
         return PipelineResponse(
             request.http_request,
             self._sender.send(request.http_request, **request.context.options),
@@ -184,6 +186,7 @@ class Pipeline(ContextManager["Pipeline"], Generic[HTTPRequestType, HTTPResponse
         multipart_mixed_info = request.multipart_mixed_info  # type: ignore
         if not multipart_mixed_info:
             return
+        print('---made it to prepare---')
 
         requests: List[HTTPRequestType] = multipart_mixed_info[0]
         policies: List[SansIOHTTPPolicy] = multipart_mixed_info[1]
@@ -224,6 +227,10 @@ class Pipeline(ContextManager["Pipeline"], Generic[HTTPRequestType, HTTPResponse
         :rtype: ~azure.core.pipeline.PipelineResponse
         """
         self._prepare_multipart(request)
+        print('---- in Pipeline.run ----')
+        print(request.files)
+        print(self._impl_policies)
+        print(f'Number of policies: {len(self._impl_policies)}')
         context = PipelineContext(self._transport, **kwargs)
         pipeline_request: PipelineRequest[HTTPRequestType] = PipelineRequest(request, context)
         first_node = self._impl_policies[0] if self._impl_policies else _TransportRunner(self._transport)

@@ -66,7 +66,7 @@ class Configuration(Generic[HTTPRequestType, HTTPResponseType]):  # pylint: disa
             :caption: Creates the service configuration and adds policies.
     """
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, **kwargs: Any) -> None:  # pylint: disable=unused-argument
         # Headers (sent with every request)
         self.headers_policy: Optional[AnyPolicy[HTTPRequestType, HTTPResponseType]] = None
 

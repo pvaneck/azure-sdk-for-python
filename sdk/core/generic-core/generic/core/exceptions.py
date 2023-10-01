@@ -34,7 +34,6 @@ from typing import (
     Mapping,
     TypeVar,
     Generic,
-    TYPE_CHECKING,
 )
 from typing_extensions import Protocol, runtime_checkable
 

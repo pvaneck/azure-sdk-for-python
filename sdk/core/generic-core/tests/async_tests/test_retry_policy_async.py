@@ -148,16 +148,15 @@ async def test_retry_seekable_stream(http_request, http_response):
         async def send(self, request: PipelineRequest, **kwargs: Any) -> PipelineResponse:
             if self._first:
                 self._first = False
-                request.body.seek(0, 2)
+                request.content.seek(0, 2)
                 raise ServiceError("fail on first")
-            position = request.body.tell()
+            position = request.content.tell()
             assert position == 0
             response = create_http_response(http_response, request, None, status_code=400)
             return response
 
     data = BytesIO(b"Lots of dataaaa")
-    http_request = http_request("GET", "http://localhost/")
-    http_request.set_streamed_data_body(data)
+    http_request = http_request("GET", "http://localhost/", content=data)
     http_retry = AsyncRetryPolicy(retry_total=1)
     pipeline = AsyncPipeline(MockTransport(), [http_retry])
     await pipeline.run(http_request)
@@ -182,12 +181,12 @@ async def test_retry_seekable_file(http_request, http_response):
         async def send(self, request: PipelineRequest, **kwargs: Any) -> PipelineResponse:
             if self._first:
                 self._first = False
-                for value in request.files.values():
+                for value in request._files.values():
                     name, body = value[0], value[1]
                     if name and body and hasattr(body, "read"):
                         body.seek(0, 2)
                         raise ServiceError("fail on first")
-            for value in request.files.values():
+            for value in request._files.values():
                 name, body = value[0], value[1]
                 if name and body and hasattr(body, "read"):
                     position = body.tell()
@@ -198,15 +197,13 @@ async def test_retry_seekable_file(http_request, http_response):
     file = tempfile.NamedTemporaryFile(delete=False)
     file.write(b"Lots of dataaaa")
     file.close()
-    http_request = http_request("GET", "http://localhost/")
     headers = {"Content-Type": "multipart/form-data"}
-    http_request.headers = headers
     with open(file.name, "rb") as f:
         form_data_content = {
             "fileContent": f,
             "fileName": f.name,
         }
-        http_request.set_formdata_body(form_data_content)
+        http_request = http_request("GET", "http://localhost/", headers=headers, files=form_data_content)
         http_retry = AsyncRetryPolicy(retry_total=1)
         pipeline = AsyncPipeline(MockTransport(), [http_retry])
         await pipeline.run(http_request)

@@ -43,6 +43,9 @@ def basic():
         )
     elif request.form:
         # requests
+        print('================server================')
+        print(request.files)
+        print(request.form)
         assert_with_message("content length", 184, request.content_length)
         assert_with_message("fileContent", "<file content>", request.form["fileContent"])
     else:

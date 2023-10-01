@@ -52,9 +52,7 @@ def _aiohttp_content_helper(response: "RestAioHttpTransportResponse") -> bytes:
     # pylint: disable=protected-access
     """Helper for body method of Aiohttp responses.
 
-    Since aiohttp body methods need decompression work synchronously,
-    need to share this code across old and new aiohttp transport responses
-    for backcompat.
+    The aiohttp body methods need decompression to work synchronously.
 
     :param response: The response to decode
     :type response: ~generic.core.rest.RestAioHttpTransportResponse
@@ -278,9 +276,7 @@ class AioHttpStreamDownloadGenerator(collections.abc.AsyncIterator):
             internal_response = self.response._internal_response  # pylint: disable=protected-access
             # TODO: Determine how chunks should be read.
             # chunk = await self.response.internal_response.content.read(self.block_size)
-            chunk = await internal_response.content.read(
-                self.block_size
-            )  # pylint: disable=protected-access
+            chunk = await internal_response.content.read(self.block_size)  # pylint: disable=protected-access
             if not chunk:
                 raise _ResponseStopIteration()
             if not self._decompress:

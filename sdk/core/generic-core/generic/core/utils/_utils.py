@@ -17,6 +17,7 @@ from typing import (
     Dict,
 )
 from datetime import timezone
+from urllib.parse import urlparse
 
 TZ_UTC = timezone.utc
 
@@ -45,47 +46,6 @@ class _FixedOffset(datetime.tzinfo):
         return datetime.timedelta(0)
 
 
-def _convert_to_isoformat(date_time):
-    """Deserialize a date in RFC 3339 format to datetime object.
-    Check https://tools.ietf.org/html/rfc3339#section-5.8 for examples.
-
-    :param str date_time: The date in RFC 3339 format.
-    """
-    if not date_time:
-        return None
-    if date_time[-1] == "Z":
-        delta = 0
-        timestamp = date_time[:-1]
-    else:
-        timestamp = date_time[:-6]
-        sign, offset = date_time[-6], date_time[-5:]
-        delta = int(sign + offset[:1]) * 60 + int(sign + offset[-2:])
-
-    check_decimal = timestamp.split(".")
-    if len(check_decimal) > 1:
-        decimal_str = ""
-        for digit in check_decimal[1]:
-            if digit.isdigit():
-                decimal_str += digit
-            else:
-                break
-        if len(decimal_str) > 6:
-            timestamp = timestamp.replace(decimal_str, decimal_str[0:6])
-
-    if delta == 0:
-        tzinfo = TZ_UTC
-    else:
-        tzinfo = timezone(datetime.timedelta(minutes=delta))
-
-    try:
-        deserialized = datetime.datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%f")
-    except ValueError:
-        deserialized = datetime.datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S")
-
-    deserialized = deserialized.replace(tzinfo=tzinfo)
-    return deserialized
-
-
 def case_insensitive_dict(
     *args: Optional[Union[Mapping[str, Any], Iterable[Tuple[str, Any]]]], **kwargs: Any
 ) -> MutableMapping[str, Any]:
@@ -97,6 +57,38 @@ def case_insensitive_dict(
     :rtype: ~collections.abc.MutableMapping
     """
     return CaseInsensitiveDict(*args, **kwargs)
+
+
+def _format_parameters_helper(http_request, params):
+    """Helper for format_parameters.
+
+    Format parameters into a valid query string.
+    It's assumed all parameters have already been quoted as
+    valid URL strings.
+
+    :param http_request: The http request whose parameters
+     we are trying to format
+    :type http_request: any
+    :param dict params: A dictionary of parameters.
+    """
+    query = urlparse(http_request.url).query
+    if query:
+        http_request.url = http_request.url.partition("?")[0]
+        existing_params = {p[0]: p[-1] for p in [p.partition("=") for p in query.split("&")]}
+        params.update(existing_params)
+    query_params = []
+    for k, v in params.items():
+        if isinstance(v, list):
+            for w in v:
+                if w is None:
+                    raise ValueError("Query parameter {} cannot be None".format(k))
+                query_params.append("{}={}".format(k, w))
+        else:
+            if v is None:
+                raise ValueError("Query parameter {} cannot be None".format(k))
+            query_params.append("{}={}".format(k, v))
+    query = "?" + "&".join(query_params)
+    http_request.url = http_request.url + query
 
 
 class CaseInsensitiveDict(MutableMapping[str, Any]):

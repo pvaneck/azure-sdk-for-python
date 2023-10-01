@@ -162,8 +162,8 @@ class RequestsTransport(HttpTransport):
                 request.method,
                 request.url,
                 headers=request.headers,
-                data=request._data,
-                files=request._files,
+                data=request._data,  # pylint: disable=protected-access
+                files=request._files,  # pylint: disable=protected-access
                 verify=kwargs.pop("connection_verify", self.connection_config.verify),
                 timeout=timeout,
                 cert=kwargs.pop("connection_cert", self.connection_config.cert),

@@ -342,8 +342,12 @@ def test_use_custom_json_encoder():
 def test_request_policies_chain(port):
     class NewPolicyOne(SansIOHTTPPolicy):
         def on_request(self, request):
-            # deals with request like an old request
-            request.http_request.set_json_body({"hello": "world"})
+            request.http_request = HttpRequest(
+                request.http_request.method,
+                request.http_request.url,
+                headers=request.http_request.headers,
+                json={"hello": "world"}
+            )
 
     class NewPolicyModifyHeaders(SansIOHTTPPolicy):
         def on_request(self, request):
@@ -356,24 +360,21 @@ def test_request_policies_chain(port):
                 "Content-Length": "0",
             }
 
-    class NewPolicySerializeRequest(SansIOHTTPPolicy):
+    class NewPolicyValidateRequest(SansIOHTTPPolicy):
         def on_request(self, request):
-            # don't want to deal with content in serialize, so let's first just remove it
-            request.http_request.data = None
-            expected = (
-                b"DELETE http://localhost:5000/container0/blob0 HTTP/1.1\r\n"
-                b"x-date: Thu, 14 Jun 2018 16:46:54 GMT\r\n"
-                b"Authorization: SharedKey account:G4jjBXA7LI/RnWKIOQ8i9xH4p76pAQ+4Fs4R1VxasaE=\r\n"  # fake key suppressed in credscan
-                b"Content-Length: 0\r\n"
-                b"\r\n"
-            )
-            assert request.http_request.serialize() == expected
+            expected = {
+                "x-date": "Thu, 14 Jun 2018 16:46:54 GMT",
+                "Authorization": "SharedKey account:G4jjBXA7LI/RnWKIOQ8i9xH4p76pAQ+4Fs4R1VxasaE=",  # fake key suppressed in credscan
+                "Content-Length": "0",
+            }
+            assert request.http_request.headers == expected
+            assert request.http_request.content == '{"hello": "world"}'
             raise ValueError("Passed through the policies!")
 
     policies = [
         NewPolicyOne(),
         NewPolicyModifyHeaders(),
-        NewPolicySerializeRequest(),
+        NewPolicyValidateRequest()
     ]
     request = HttpRequest("DELETE", "/container0/blob0")
     client = TestRestClient(port="5000", policies=policies)

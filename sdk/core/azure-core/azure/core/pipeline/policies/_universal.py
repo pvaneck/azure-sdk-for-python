@@ -451,6 +451,9 @@ class HttpLoggingPolicy(
         """
         http_request = request.http_request
         options = request.context.options
+
+        print("in on_request for http_logging_policy")
+        print(http_request.files)
         # Get logger in my context first (request has been retried)
         # then read from kwargs (pop if that's the case)
         # then use my instance logger

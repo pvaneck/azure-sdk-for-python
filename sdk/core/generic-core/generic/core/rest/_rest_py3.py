@@ -38,7 +38,7 @@ from typing import (
     AsyncContextManager,
 )
 
-from ..utils._utils import case_insensitive_dict
+from ..utils._utils import case_insensitive_dict, _format_parameters_helper
 
 from ._helpers import (
     ParamsType,
@@ -46,17 +46,15 @@ from ._helpers import (
     set_json_body,
     set_multipart_body,
     set_urlencoded_body,
-    HttpRequestBackcompatMixin,
     set_content_body,
 )
-from ..utils._pipeline_transport_rest_shared import _format_parameters_helper
 
 ContentType = Union[str, bytes, Iterable[bytes], AsyncIterable[bytes]]
 
 ################################## CLASSES ######################################
 
 
-class HttpRequest(HttpRequestBackcompatMixin):
+class HttpRequest:
     """An HTTP request.
 
     It should be passed to your client's `send_request` method.
@@ -179,7 +177,6 @@ class HttpRequest(HttpRequestBackcompatMixin):
             )
             request._data = copy.deepcopy(self._data, memo)
             request._files = copy.deepcopy(self._files, memo)
-            self._add_backcompat_properties(request, memo)
             return request
         except (ValueError, TypeError):
             return copy.copy(self)

@@ -25,7 +25,7 @@
 # --------------------------------------------------------------------------
 from __future__ import annotations
 import logging
-from typing import Generic, TypeVar, Union, Any, List, Dict, Optional, Iterable, ContextManager
+from typing import Generic, TypeVar, Union, Any, List, Optional, Iterable, ContextManager
 
 from . import (
     PipelineRequest,
@@ -153,49 +153,6 @@ class Pipeline(ContextManager["Pipeline"], Generic[HTTPRequestType, HTTPResponse
     def __exit__(self, *exc_details: Any) -> None:  # pylint: disable=arguments-differ
         self._transport.__exit__(*exc_details)
 
-    @staticmethod
-    def _prepare_multipart_mixed_request(request: HTTPRequestType) -> None:
-        """Will execute the multipart policies.
-
-        Does nothing if "set_multipart_mixed" was never called.
-
-        :param request: The request object.
-        :type request: ~generic.core.rest.HttpRequest
-        """
-        multipart_mixed_info = request.multipart_mixed_info  # type: ignore
-        if not multipart_mixed_info:
-            return
-
-        requests: List[HTTPRequestType] = multipart_mixed_info[0]
-        policies: List[SansIOHTTPPolicy] = multipart_mixed_info[1]
-        pipeline_options: Dict[str, Any] = multipart_mixed_info[3]
-
-        # Apply on_requests concurrently to all requests
-        import concurrent.futures
-
-        def prepare_requests(req):
-            if req.multipart_mixed_info:
-                # Recursively update changeset "sub requests"
-                Pipeline._prepare_multipart_mixed_request(req)
-            context = PipelineContext(None, **pipeline_options)
-            pipeline_request = PipelineRequest(req, context)
-            for policy in policies:
-                _await_result(policy.on_request, pipeline_request)
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            # List comprehension to raise exceptions if happened
-            [  # pylint: disable=expression-not-assigned, unnecessary-comprehension
-                _ for _ in executor.map(prepare_requests, requests)
-            ]
-
-    def _prepare_multipart(self, request: HTTPRequestType) -> None:
-        # This code is fine as long as HTTPRequestType is actually
-        # generic.core.rest.HttpRequest, bu we don't check it in here
-        # since we didn't see (yet) pipeline usage where it's not this actual instance
-        # class used
-        self._prepare_multipart_mixed_request(request)
-        request.prepare_multipart_body()  # type: ignore
-
     def run(self, request: HTTPRequestType, **kwargs: Any) -> PipelineResponse[HTTPRequestType, HTTPResponseType]:
         """Runs the HTTP Request through the chained policies.
 
@@ -204,7 +161,6 @@ class Pipeline(ContextManager["Pipeline"], Generic[HTTPRequestType, HTTPResponse
         :return: The PipelineResponse object
         :rtype: ~generic.core.pipeline.PipelineResponse
         """
-        self._prepare_multipart(request)
         context = PipelineContext(self._transport, **kwargs)
         pipeline_request: PipelineRequest[HTTPRequestType] = PipelineRequest(request, context)
         first_node = self._impl_policies[0] if self._impl_policies else _TransportRunner(self._transport)

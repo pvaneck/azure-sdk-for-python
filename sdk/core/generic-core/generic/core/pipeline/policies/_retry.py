@@ -313,9 +313,9 @@ class RetryPolicyBase:
                 # if body is not seekable, then retry would not work
                 return False
         file_positions = settings.get("file_positions")
-        if response.http_request._files and file_positions:
+        if response.http_request._files and file_positions:  # pylint: disable=protected-access
             try:
-                for value in response.http_request._files.values():
+                for value in response.http_request._files.values():  # pylint: disable=protected-access
                     file_name, body = value[0], value[1]
                     if file_name in file_positions:
                         position = file_positions[file_name]
@@ -377,10 +377,10 @@ class RetryPolicyBase:
                 # if body position cannot be obtained, then retries will not work
                 pass
         else:
-            if request.http_request._files:
+            if request.http_request._files:  # pylint: disable=protected-access
                 file_positions = {}
                 try:
-                    for value in request.http_request._files.values():
+                    for value in request.http_request._files.values():  # pylint: disable=protected-access
                         name, body = value[0], value[1]
                         if name and body and hasattr(body, "read"):
                             # If it has "read", it has "tell", so casting for mypy

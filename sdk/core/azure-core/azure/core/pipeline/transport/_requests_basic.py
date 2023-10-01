@@ -340,6 +340,8 @@ class RequestsTransport(HttpTransport):
             else:
                 read_timeout = kwargs.pop("read_timeout", self.connection_config.read_timeout)
                 timeout = (connection_timeout, read_timeout)
+            print('------sending -------- in RequestsTransport')
+            print(f'Data: {request.data}\n Files: {request.files}\n Headers: {request.headers}\n Method: {request.method}\n URL: {request.url}')
             response = self.session.request(  # type: ignore
                 request.method,
                 request.url,

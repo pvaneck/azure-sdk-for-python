@@ -24,8 +24,6 @@
 #
 # --------------------------------------------------------------------------
 import pytest
-import json
-import requests
 from unittest.mock import Mock
 
 # module under test
@@ -35,28 +33,7 @@ from generic.core.exceptions import (
     DeserializationError,
 )
 from generic.core.rest._http_response_impl import _HttpResponseBaseImpl as RestHttpResponseBase
-# from gener.core.rest import HttpRequest
 from utils import HTTP_REQUESTS
-
-
-class RestMockResponse(RestHttpResponseBase):
-    def __init__(self, json_body):
-        super(RestMockResponse, self).__init__(
-            request=None,
-            internal_response=None,
-            status_code=400,
-            reason="Bad Request",
-            content_type="application/json",
-            headers={},
-            stream_download_generator=None,
-        )
-
-    def body(self):
-        return self._body
-
-    @property
-    def content(self):
-        return self._body
 
 
 class FakeErrorOne(object):

@@ -154,16 +154,16 @@ class AioHttpTransport(AsyncHttpTransport):
         :rtype: bytes or ~aiohttp.FormData
         :return: The request data
         """
-        if request._files:
+        if request._files:  # pylint: disable=protected-access
             form_data = aiohttp.FormData()
-            for form_file, data in request._files.items():
+            for form_file, data in request._files.items():  # pylint: disable=protected-access
                 content_type = data[2] if len(data) > 2 else None
                 try:
                     form_data.add_field(form_file, data[1], filename=data[0], content_type=content_type)
                 except IndexError as err:
                     raise ValueError("Invalid formdata formatting: {}".format(data)) from err
             return form_data
-        return request._data
+        return request.content
 
     async def send(self, request: RestHttpRequest, **config) -> RestAsyncHttpResponse:
         """Send the request using this HTTP sender.

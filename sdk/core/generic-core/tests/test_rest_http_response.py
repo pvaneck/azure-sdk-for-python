@@ -16,11 +16,14 @@ from generic.core.exceptions import HttpResponseError
 import xml.etree.ElementTree as ET
 from utils import readonly_checks
 
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
 
 @pytest.fixture
 def send_request(client):
     def _send_request(request):
-        response = client.send_request(request, stream=False)
+        response = client.send_request(request, stream=False, logging_enable=True)
         response.raise_for_status()
         return response
 

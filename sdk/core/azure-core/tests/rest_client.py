@@ -70,5 +70,9 @@ class TestRestClient(object):
         :rtype: ~azure.core.rest.HttpResponse
         """
         request_copy = deepcopy(request)
+        print('---in send request')
+        print(request_copy.files)
         request_copy.url = self._client.format_url(request_copy.url)
+        print(request_copy.url)
+        print('**********************')
         return self._client.send_request(request_copy, **kwargs)

@@ -25,7 +25,7 @@
 # --------------------------------------------------------------------------
 from __future__ import annotations
 from types import TracebackType
-from typing import Any, Union, Generic, TypeVar, List, Dict, Optional, Iterable, Type
+from typing import Any, Union, Generic, TypeVar, List, Optional, Iterable, Type
 from typing_extensions import AsyncContextManager
 
 from . import PipelineRequest, PipelineResponse, PipelineContext
@@ -163,45 +163,6 @@ class AsyncPipeline(AsyncContextManager["AsyncPipeline"], Generic[HTTPRequestTyp
     ) -> None:
         await self._transport.__aexit__(exc_type, exc_value, traceback)
 
-    async def _prepare_multipart_mixed_request(self, request: HTTPRequestType) -> None:
-        """Will execute the multipart policies.
-
-        Does nothing if "set_multipart_mixed" was never called.
-
-        :param request: The HTTP request object.
-        :type request: ~generic.core.rest.HttpRequest
-        """
-        multipart_mixed_info = request.multipart_mixed_info  # type: ignore
-        if not multipart_mixed_info:
-            return
-
-        requests: List[HTTPRequestType] = multipart_mixed_info[0]
-        policies: List[SansIOHTTPPolicy] = multipart_mixed_info[1]
-        pipeline_options: Dict[str, Any] = multipart_mixed_info[3]
-
-        async def prepare_requests(req):
-            if req.multipart_mixed_info:
-                # Recursively update changeset "sub requests"
-                await self._prepare_multipart_mixed_request(req)
-            context = PipelineContext(None, **pipeline_options)
-            pipeline_request = PipelineRequest(req, context)
-            for policy in policies:
-                await _await_result(policy.on_request, pipeline_request)
-
-        # Not happy to make this code asyncio specific, but that's multipart only for now
-        # If we need trio and multipart, let's reinvesitgate that later
-        import asyncio
-
-        await asyncio.gather(*[prepare_requests(req) for req in requests])
-
-    async def _prepare_multipart(self, request: HTTPRequestType) -> None:
-        # This code is fine as long as HTTPRequestType is actually
-        # generic.core.rest.HttpRequest, but we don't check it in here
-        # since we didn't see (yet) pipeline usage where it's not this actual instance
-        # class used
-        await self._prepare_multipart_mixed_request(request)
-        request.prepare_multipart_body()  # type: ignore
-
     async def run(
         self, request: HTTPRequestType, **kwargs: Any
     ) -> PipelineResponse[HTTPRequestType, AsyncHTTPResponseType]:
@@ -212,7 +173,6 @@ class AsyncPipeline(AsyncContextManager["AsyncPipeline"], Generic[HTTPRequestTyp
         :return: The PipelineResponse object.
         :rtype: ~generic.core.pipeline.PipelineResponse
         """
-        await self._prepare_multipart(request)
         context = PipelineContext(self._transport, **kwargs)
         pipeline_request = PipelineRequest(request, context)
         first_node = self._impl_policies[0] if self._impl_policies else _AsyncTransportRunner(self._transport)

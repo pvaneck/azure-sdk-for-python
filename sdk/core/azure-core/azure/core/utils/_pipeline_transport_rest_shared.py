@@ -137,6 +137,7 @@ def _prepare_multipart_body_helper(http_request: "HTTPRequestType", content_inde
     """
     if not http_request.multipart_mixed_info:
         return 0
+    print("made it here to multipart body helper")
 
     requests: Sequence["HTTPRequestType"] = http_request.multipart_mixed_info[0]
     boundary: Optional[str] = http_request.multipart_mixed_info[2]
