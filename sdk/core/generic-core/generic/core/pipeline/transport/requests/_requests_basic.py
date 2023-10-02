@@ -33,7 +33,6 @@ from urllib3.exceptions import (
 )
 import requests  # pylint: disable=networking-import-outside-azure-core-transport
 
-from ....configuration import ConnectionConfiguration
 from ....exceptions import (
     ServiceRequestError,
     ServiceResponseError,
@@ -41,7 +40,7 @@ from ....exceptions import (
     HttpResponseError,
 )
 
-from .._base import HttpTransport
+from .._base import HttpTransport, _create_connection_config
 from ._bigger_block_size_http_adapters import BiggerBlockSizeHTTPAdapter
 from ....rest._requests_basic import RestRequestsTransportResponse
 from ..._tools import (
@@ -95,7 +94,7 @@ class RequestsTransport(HttpTransport):
         self._session_owner = kwargs.get("session_owner", True)
         if not self._session_owner and not self.session:
             raise ValueError("session_owner cannot be False if no session is provided")
-        self.connection_config = ConnectionConfiguration(**kwargs)
+        self.connection_config = _create_connection_config(**kwargs)
         self._use_env_settings = kwargs.pop("use_env_settings", True)
 
     def __enter__(self) -> "RequestsTransport":
@@ -148,7 +147,7 @@ class RequestsTransport(HttpTransport):
         error: Optional[ServiceErrorUnion] = None
 
         try:
-            connection_timeout = kwargs.pop("connection_timeout", self.connection_config.timeout)
+            connection_timeout = kwargs.pop("connection_timeout", self.connection_config.get("timeout"))
 
             if isinstance(connection_timeout, tuple):
                 if "read_timeout" in kwargs:
@@ -156,7 +155,7 @@ class RequestsTransport(HttpTransport):
                 _LOGGER.warning("Tuple timeout setting is deprecated")
                 timeout = connection_timeout
             else:
-                read_timeout = kwargs.pop("read_timeout", self.connection_config.read_timeout)
+                read_timeout = kwargs.pop("read_timeout", self.connection_config.get("read_timeout"))
                 timeout = (connection_timeout, read_timeout)
             response = self.session.request(  # type: ignore
                 request.method,
@@ -164,9 +163,9 @@ class RequestsTransport(HttpTransport):
                 headers=request.headers,
                 data=request._data,  # pylint: disable=protected-access
                 files=request._files,  # pylint: disable=protected-access
-                verify=kwargs.pop("connection_verify", self.connection_config.verify),
+                verify=kwargs.pop("connection_verify", self.connection_config.get("verify")),
                 timeout=timeout,
-                cert=kwargs.pop("connection_cert", self.connection_config.cert),
+                cert=kwargs.pop("connection_cert", self.connection_config.get("cert")),
                 allow_redirects=False,
                 **kwargs
             )
@@ -201,7 +200,7 @@ class RequestsTransport(HttpTransport):
         retval: RestHttpResponse = RestRequestsTransportResponse(
             request=request,
             internal_response=response,
-            block_size=self.connection_config.data_block_size,
+            block_size=self.connection_config.get("data_block_size"),
         )
         if not kwargs.get("stream"):
             _handle_non_stream_rest_response(retval)

@@ -16,7 +16,6 @@ from itertools import product
 from unittest.mock import Mock
 
 import pytest
-from generic.core.configuration import ConnectionConfiguration
 from generic.core.exceptions import (
     ServiceError,
     ServiceRequestError,
@@ -222,7 +221,7 @@ async def test_retry_timeout(http_request):
     transport = Mock(
         spec=AsyncHttpTransport,
         send=Mock(wraps=send),
-        connection_config=ConnectionConfiguration(connection_timeout=timeout * 2),
+        connection_config={"connection_timeout": timeout * 2},
         sleep=asyncio.sleep,
     )
     pipeline = AsyncPipeline(transport, [AsyncRetryPolicy(timeout=timeout)])

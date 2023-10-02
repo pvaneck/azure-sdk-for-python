@@ -102,8 +102,7 @@ def create_http_response(http_response, *args, **kwargs):
 
 
 def readonly_checks(response):
-    # though we want these properties to be completely readonly, it doesn't work
-    # for the backcompat properties
+    # We want these properties to be completely readonly.
     assert isinstance(response.request, RestHttpRequest)
     assert isinstance(response.status_code, int)
     assert response.headers

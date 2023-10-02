@@ -23,13 +23,12 @@
 # IN THE SOFTWARE.
 #
 # --------------------------------------------------------------------------
-from typing import TypeVar, Any, Dict, Optional, Type, List, Union, cast, IO
+from typing import TypeVar, Any, Dict, Optional, Type, List, Union, cast, IO, MutableMapping
 from io import SEEK_SET, UnsupportedOperation
 import logging
 import time
 from enum import Enum
 
-from ...configuration import ConnectionConfiguration
 from .. import PipelineResponse, PipelineRequest, PipelineContext
 from ..transport import HttpTransport
 from ...rest import HttpResponse, AsyncHttpResponse, HttpRequest
@@ -355,10 +354,10 @@ class RetryPolicyBase:
             # FIXME This is fragile, should be refactored. Casting my way for mypy
             # https://github.com/Azure/azure-sdk-for-python/issues/31530
             connection_config = cast(
-                ConnectionConfiguration, request.context.transport.connection_config  # type: ignore
+                MutableMapping[str, Any], request.context.transport.connection_config  # type: ignore
             )
 
-            default_timeout = getattr(connection_config, "timeout", absolute_timeout)
+            default_timeout = connection_config.get("connection_timeout")
             try:
                 if absolute_timeout < default_timeout:
                     request.context.options["connection_timeout"] = absolute_timeout

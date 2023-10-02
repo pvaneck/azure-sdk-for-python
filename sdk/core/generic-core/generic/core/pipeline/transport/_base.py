@@ -29,7 +29,7 @@ import logging
 import time
 from urllib.parse import urlparse
 
-from typing import Generic, TypeVar, Any, ContextManager
+from typing import Generic, TypeVar, Any, ContextManager, Union, Optional, MutableMapping
 
 HTTPResponseType = TypeVar("HTTPResponseType")
 HTTPRequestType = TypeVar("HTTPRequestType")
@@ -93,6 +93,38 @@ def _urljoin(base_url: str, stub_url: str) -> str:
             query_params.insert(0, parsed_base_url.query)
         parsed_base_url = parsed_base_url._replace(query="&".join(query_params))
     return parsed_base_url.geturl()
+
+
+def _create_connection_config(
+    *,
+    connection_timeout: float = 300,
+    read_timeout: float = 300,
+    connection_verify: Union[bool, str] = True,
+    connection_cert: Optional[str] = None,
+    connection_data_block_size: int = 4096,
+    **kwargs: Any,   # pylint: disable=unused-argument
+) -> MutableMapping[str, Any]:
+    """HTTP transport connection configuration settings.
+
+    :keyword float connection_timeout: A single float in seconds for the connection timeout. Defaults to 300 seconds.
+    :keyword float read_timeout: A single float in seconds for the read timeout. Defaults to 300 seconds.
+    :keyword connection_verify: SSL certificate verification. Enabled by default. Set to False to disable,
+     alternatively can be set to the path to a CA_BUNDLE file or directory with certificates of trusted CAs.
+    :paramtype connection_verify: bool or str
+    :keyword str connection_cert: Client-side certificates. You can specify a local cert to use as client side
+     certificate, as a single file (containing the private key and the certificate) or as a tuple of both files' paths.
+    :keyword int connection_data_block_size: The block size of data sent over the connection. Defaults to 4096 bytes.
+
+    :return: The connection configuration.
+    :rtype: MutableMapping[str, any]
+    """
+    return {
+        "connection_timeout": connection_timeout,
+        "read_timeout": read_timeout,
+        "connection_verify": connection_verify,
+        "connection_cert": connection_cert,
+        "data_block_size": connection_data_block_size,
+    }
 
 
 class HttpTransport(ContextManager["HttpTransport"], abc.ABC, Generic[HTTPRequestType, HTTPResponseType]):

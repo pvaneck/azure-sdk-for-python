@@ -10,7 +10,6 @@ except ImportError:
 
 import pytest
 from itertools import product
-from generic.core.configuration import ConnectionConfiguration
 from generic.core.exceptions import (
     ServiceError,
     ServiceRequestError,
@@ -224,7 +223,7 @@ def test_retry_timeout(http_request):
     transport = Mock(
         spec=HttpTransport,
         send=Mock(wraps=send),
-        connection_config=ConnectionConfiguration(connection_timeout=timeout * 2),
+        connection_config={"connection_timeout": timeout * 2},
         sleep=time.sleep,
     )
     pipeline = Pipeline(transport, [RetryPolicy(timeout=timeout)])

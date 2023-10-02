@@ -33,12 +33,12 @@ import asyncio
 import aiohttp  # pylint: disable=networking-import-outside-azure-core-transport
 import aiohttp.client_exceptions  # pylint: disable=networking-import-outside-azure-core-transport
 
-from ....configuration import ConnectionConfiguration
 from ....exceptions import (
     ServiceRequestError,
     ServiceResponseError,
 )
 from .._base_async import AsyncHttpTransport
+from .._base import _create_connection_config
 from ....rest._aiohttp import RestAioHttpTransportResponse
 from ..._tools_async import (
     handle_no_stream_rest_response as _handle_no_stream_rest_response,
@@ -86,7 +86,7 @@ class AioHttpTransport(AsyncHttpTransport):
         self.session = session
         if not self._session_owner and not self.session:
             raise ValueError("session_owner cannot be False if no session is provided")
-        self.connection_config = ConnectionConfiguration(**kwargs)
+        self.connection_config = _create_connection_config(**kwargs)
         self._use_env_settings = kwargs.pop("use_env_settings", True)
 
     async def __aenter__(self):
@@ -200,8 +200,8 @@ class AioHttpTransport(AsyncHttpTransport):
 
         response: Optional[RestAsyncHttpResponse] = None
         config["ssl"] = self._build_ssl_config(
-            cert=config.pop("connection_cert", self.connection_config.cert),
-            verify=config.pop("connection_verify", self.connection_config.verify),
+            cert=config.pop("connection_cert", self.connection_config.get("cert")),
+            verify=config.pop("connection_verify", self.connection_config.get("verify")),
         )
         # If we know for sure there is not body, disable "auto content type"
         # Otherwise, aiohttp will send "application/octet-stream" even for empty POST request
@@ -210,8 +210,8 @@ class AioHttpTransport(AsyncHttpTransport):
             config["skip_auto_headers"] = ["Content-Type"]
         try:
             stream_response = config.pop("stream", False)
-            timeout = config.pop("connection_timeout", self.connection_config.timeout)
-            read_timeout = config.pop("read_timeout", self.connection_config.read_timeout)
+            timeout = config.pop("connection_timeout", self.connection_config.get("timeout"))
+            read_timeout = config.pop("read_timeout", self.connection_config.get("read_timeout"))
             socket_timeout = aiohttp.ClientTimeout(sock_connect=timeout, sock_read=read_timeout)
             result = await self.session.request(  # type: ignore
                 request.method,
@@ -226,7 +226,7 @@ class AioHttpTransport(AsyncHttpTransport):
             response = RestAioHttpTransportResponse(
                 request=request,
                 internal_response=result,
-                block_size=self.connection_config.data_block_size,
+                block_size=self.connection_config.get("data_block_size"),
                 decompress=not auto_decompress,
             )
             if not stream_response:
