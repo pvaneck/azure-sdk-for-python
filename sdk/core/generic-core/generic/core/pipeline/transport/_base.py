@@ -95,14 +95,14 @@ def _urljoin(base_url: str, stub_url: str) -> str:
     return parsed_base_url.geturl()
 
 
-def _create_connection_config(
+def _create_connection_config(  # pylint: disable=unused-argument
     *,
     connection_timeout: float = 300,
     read_timeout: float = 300,
     connection_verify: Union[bool, str] = True,
     connection_cert: Optional[str] = None,
     connection_data_block_size: int = 4096,
-    **kwargs: Any,   # pylint: disable=unused-argument
+    **kwargs: Any,
 ) -> MutableMapping[str, Any]:
     """HTTP transport connection configuration settings.
 

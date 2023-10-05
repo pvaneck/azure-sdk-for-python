@@ -130,7 +130,7 @@ class AioHttpTransport(AsyncHttpTransport):
         :param tuple cert: Cert information
         :param bool verify: SSL verification or path to CA file or directory
         :rtype: bool or str or :class:`ssl.SSLContext`
-        :return: SSL Configuration
+        :return: SSL configuration
         """
         ssl_ctx = None
 

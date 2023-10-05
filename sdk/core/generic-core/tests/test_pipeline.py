@@ -36,7 +36,6 @@ import sys
 
 import pytest
 
-from generic.core.configuration import Configuration
 from generic.core.pipeline import Pipeline
 from generic.core import PipelineClient
 from generic.core.pipeline.policies import (
@@ -87,7 +86,6 @@ def test_sans_io_exception(http_request):
 
 @pytest.mark.parametrize("http_request", HTTP_REQUESTS)
 def test_requests_socket_timeout(http_request):
-    conf = Configuration()
     request = http_request("GET", "https://bing.com")
     policies = [UserAgentPolicy("myusergant")]
     # Sometimes this will raise a read timeout, sometimes a socket timeout depending on timing.
@@ -271,40 +269,40 @@ def test_add_custom_policy():
         def send(*args):
             raise ServiceError("boo")
 
-    config = Configuration()
     retry_policy = RetryPolicy()
-    config.retry_policy = retry_policy
     boo_policy = BooPolicy()
     foo_policy = FooPolicy()
-    client = PipelineClient(base_url="test", config=config, per_call_policies=boo_policy)
+    client = PipelineClient(base_url="test", retry_policy=retry_policy, per_call_policies=boo_policy)
     policies = client._pipeline._impl_policies
     assert boo_policy in policies
     pos_boo = policies.index(boo_policy)
     pos_retry = policies.index(retry_policy)
     assert pos_boo < pos_retry
 
-    client = PipelineClient(base_url="test", config=config, per_call_policies=[boo_policy])
+    client = PipelineClient(base_url="test", retry_policy=retry_policy, per_call_policies=[boo_policy])
     policies = client._pipeline._impl_policies
     assert boo_policy in policies
     pos_boo = policies.index(boo_policy)
     pos_retry = policies.index(retry_policy)
     assert pos_boo < pos_retry
 
-    client = PipelineClient(base_url="test", config=config, per_retry_policies=boo_policy)
+    client = PipelineClient(base_url="test", retry_policy=retry_policy, per_retry_policies=boo_policy)
     policies = client._pipeline._impl_policies
     assert boo_policy in policies
     pos_boo = policies.index(boo_policy)
     pos_retry = policies.index(retry_policy)
     assert pos_boo > pos_retry
 
-    client = PipelineClient(base_url="test", config=config, per_retry_policies=[boo_policy])
+    client = PipelineClient(base_url="test", retry_policy=retry_policy, per_retry_policies=[boo_policy])
     policies = client._pipeline._impl_policies
     assert boo_policy in policies
     pos_boo = policies.index(boo_policy)
     pos_retry = policies.index(retry_policy)
     assert pos_boo > pos_retry
 
-    client = PipelineClient(base_url="test", config=config, per_call_policies=boo_policy, per_retry_policies=foo_policy)
+    client = PipelineClient(
+        base_url="test", retry_policy=retry_policy, per_call_policies=boo_policy, per_retry_policies=foo_policy
+    )
     policies = client._pipeline._impl_policies
     assert boo_policy in policies
     assert foo_policy in policies
@@ -315,7 +313,7 @@ def test_add_custom_policy():
     assert pos_foo > pos_retry
 
     client = PipelineClient(
-        base_url="test", config=config, per_call_policies=[boo_policy], per_retry_policies=[foo_policy]
+        base_url="test", retry_policy=retry_policy, per_call_policies=[boo_policy], per_retry_policies=[foo_policy]
     )
     policies = client._pipeline._impl_policies
     assert boo_policy in policies
@@ -364,8 +362,6 @@ def test_add_custom_policy():
 
 @pytest.mark.parametrize("http_request", HTTP_REQUESTS)
 def test_basic_requests(port, http_request):
-
-    conf = Configuration()
     request = http_request("GET", "http://localhost:{}/basic/string".format(port))
     policies = [UserAgentPolicy("myusergant")]
     with Pipeline(RequestsTransport(), policies=policies) as pipeline:

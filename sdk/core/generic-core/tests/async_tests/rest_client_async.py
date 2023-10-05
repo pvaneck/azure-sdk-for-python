@@ -9,30 +9,13 @@ from copy import deepcopy
 
 from generic.core import AsyncPipelineClient
 from generic.core.pipeline import policies
-from generic.core.configuration import Configuration
-
-
-class TestRestClientConfiguration(Configuration):
-    def __init__(self, **kwargs: Any) -> None:
-        super(TestRestClientConfiguration, self).__init__(**kwargs)
-
-        kwargs.setdefault("sdk_moniker", "autorestswaggerbatfileservice/1.0.0b1")
-        self._configure(**kwargs)
-
-    def _configure(self, **kwargs) -> None:
-        self.user_agent_policy = kwargs.get("user_agent_policy") or policies.UserAgentPolicy(**kwargs)
-        self.headers_policy = kwargs.get("headers_policy") or policies.HeadersPolicy(**kwargs)
-        self.proxy_policy = kwargs.get("proxy_policy") or policies.ProxyPolicy(**kwargs)
-        self.logging_policy = kwargs.get("logging_policy") or policies.NetworkTraceLoggingPolicy(**kwargs)
-        self.retry_policy = kwargs.get("retry_policy") or policies.AsyncRetryPolicy(**kwargs)
-        self.authentication_policy = kwargs.get("authentication_policy")
 
 
 class AsyncTestRestClient(object):
     def __init__(self, port, **kwargs):
-        self._config = TestRestClientConfiguration(**kwargs)
+        kwargs.setdefault("sdk_moniker", "autorestswaggerbatfileservice/1.0.0b1")
 
-        self._client = AsyncPipelineClient(base_url="http://localhost:{}".format(port), config=self._config, **kwargs)
+        self._client = AsyncPipelineClient(base_url="http://localhost:{}".format(port), **kwargs)
 
     def send_request(self, request, **kwargs):
         """Runs the network request through the client's chained policies.

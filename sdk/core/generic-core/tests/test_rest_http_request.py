@@ -17,7 +17,6 @@ try:
 except ImportError:
     import collections  # type: ignore
 
-from generic.core.configuration import Configuration
 from generic.core.rest import HttpRequest
 from generic.core.pipeline.policies import UserAgentPolicy, SansIOHTTPPolicy, RetryPolicy
 from rest_client import TestRestClient
