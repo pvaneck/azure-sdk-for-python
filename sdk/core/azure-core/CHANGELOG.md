@@ -10,6 +10,8 @@
 
 ### Other Changes
 
+- Tracing: Updated default span name for HTTP requests to include the method along with the path.
+
 ## 1.30.2 (2024-06-06)
 
 ### Features Added

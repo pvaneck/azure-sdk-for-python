@@ -50,7 +50,7 @@ def test_distributed_tracing_policy_solo(http_request, http_response):
 
     # Check on_response
     network_span = root_span.children[0]
-    assert network_span.name == "/temp"
+    assert network_span.name == "GET /temp"
     assert network_span.attributes.get("http.method") == "GET"
     assert network_span.attributes.get("component") == "http"
     assert network_span.attributes.get("http.url") == "http://localhost/temp?query=query"
@@ -62,7 +62,7 @@ def test_distributed_tracing_policy_solo(http_request, http_response):
 
     # Check on_exception
     network_span = root_span.children[1]
-    assert network_span.name == "/temp"
+    assert network_span.name == "GET /temp"
     assert network_span.attributes.get("http.method") == "GET"
     assert network_span.attributes.get("component") == "http"
     assert network_span.attributes.get("http.url") == "http://localhost/temp?query=query"
@@ -91,7 +91,7 @@ def test_distributed_tracing_policy_error_response(http_request, http_response):
 
         policy.on_response(pipeline_request, PipelineResponse(request, response, PipelineContext(None)))
         network_span = root_span.children[0]
-        assert network_span.name == "/temp"
+        assert network_span.name == "GET /temp"
         assert network_span.attributes.get("error.type") == "403"
 
 
@@ -189,7 +189,7 @@ def test_distributed_tracing_policy_with_user_agent(http_request, http_response)
             user_agent.on_response(pipeline_request, pipeline_response)
 
         network_span = root_span.children[0]
-        assert network_span.name == "/"
+        assert network_span.name == "GET /"
         assert network_span.attributes.get("http.method") == "GET"
         assert network_span.attributes.get("component") == "http"
         assert network_span.attributes.get("http.url") == "http://localhost"
@@ -199,7 +199,7 @@ def test_distributed_tracing_policy_with_user_agent(http_request, http_response)
         assert network_span.attributes.get("http.status_code") == 202
 
         network_span = root_span.children[1]
-        assert network_span.name == "/"
+        assert network_span.name == "GET /"
         assert network_span.attributes.get("http.method") == "GET"
         assert network_span.attributes.get("component") == "http"
         assert network_span.attributes.get("http.url") == "http://localhost"

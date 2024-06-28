@@ -59,9 +59,10 @@ def _default_network_span_namer(http_request: HTTPRequestType) -> str:
     :rtype: str
     """
     path = urllib.parse.urlparse(http_request.url).path
+
     if not path:
         path = "/"
-    return path
+    return f"{http_request.method} {path}"
 
 
 class DistributedTracingPolicy(SansIOHTTPPolicy[HTTPRequestType, HTTPResponseType]):
