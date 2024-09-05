@@ -13,7 +13,7 @@
           "Pool": "env:LINUXPOOL",
           "PythonVersion": "3.8",
           "CoverageArg": "--disablecov",
-          "InjectedPackages": "git+https://github.com/AzureAD/microsoft-authentication-library-for-python@dev",
+          "InjectedPackages": "git+https://github.com/AzureAD/microsoft-authentication-library-for-python@release-1.31.0",
           "UnsupportedToxEnvironments": "mindependency,latestdependency"
         }
       }
