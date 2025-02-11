@@ -68,18 +68,29 @@ def distributed_trace(
             if not settings.tracing_enabled and user_enabled is None:
                 return func(*args, **kwargs)
 
-            method_tracer = tracer_provider.get_tracer() if tracer_provider else default_tracer_provider.get_tracer()
+            provider = tracer_provider or default_tracer_provider
+            method_tracer = provider.get_tracer()
             if not method_tracer:
                 return func(*args, **kwargs)
 
             name = func.__qualname__
+            callback_handler = provider.get_callback_handler(name)
             with method_tracer.start_span(
                 name=name,
                 kind=SpanKind.INTERNAL,
                 attributes=tracing_options.get("attributes"),
                 record_exception=tracing_options.get("record_exception", True),
-            ):
-                return func(*args, **kwargs)
+            ) as span:
+                if callback_handler:
+                    callback_handler.before_method(span, *args, **kwargs)
+
+                kwargs["method_name"] = name
+                result = func(*args, **kwargs)
+
+                if callback_handler:
+                    callback_handler.after_method(span, result)
+
+                return result
 
         return wrapper_use_tracer
 

@@ -34,6 +34,7 @@ class DistributedHttpTracingPolicy(SansIOHTTPPolicy[HttpRequest, SansIOHttpRespo
     """
 
     TRACING_CONTEXT = "TRACING_CONTEXT"
+    TRACING_METHOD = "TRACING_METHOD"
 
     # Attribute names
     _HTTP_RESEND_COUNT = "http.request.resend_count"
@@ -57,6 +58,7 @@ class DistributedHttpTracingPolicy(SansIOHTTPPolicy[HttpRequest, SansIOHttpRespo
         ctxt = request.context.options
         try:
             tracing_options: TracingOptions = ctxt.pop("tracing_options", {})
+            method_name = ctxt.pop("method_name", None)
 
             # User can explicitly disable tracing for this request.
             user_enabled = tracing_options.get("enabled")
@@ -67,9 +69,8 @@ class DistributedHttpTracingPolicy(SansIOHTTPPolicy[HttpRequest, SansIOHttpRespo
             if not settings.tracing_enabled and user_enabled is None:
                 return
 
-            tracer = (
-                self._tracer_provider.get_tracer() if self._tracer_provider else default_tracer_provider.get_tracer()
-            )
+            provider = self._tracer_provider or default_tracer_provider
+            tracer = provider.get_tracer()
             if not tracer:
                 return
 
@@ -84,6 +85,7 @@ class DistributedHttpTracingPolicy(SansIOHTTPPolicy[HttpRequest, SansIOHttpRespo
             trace_context_headers = tracer.get_trace_context()
             request.http_request.headers.update(trace_context_headers)
             request.context[self.TRACING_CONTEXT] = span
+            request.context[self.TRACING_METHOD] = method_name
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.warning("Unable to start HTTP span: %s", err)
 
@@ -96,11 +98,16 @@ class DistributedHttpTracingPolicy(SansIOHTTPPolicy[HttpRequest, SansIOHttpRespo
             return
 
         span: "OpenTelemetrySpan" = request.context[self.TRACING_CONTEXT]
+        method_name = request.context[self.TRACING_METHOD]
         http_request = request.http_request
         if span:
             self._add_http_attributes(span, http_request, response=response.http_response)
             if request.context.get("retry_count"):
                 span.set_attribute(self._HTTP_RESEND_COUNT, request.context["retry_count"])
+            provider = self._tracer_provider or default_tracer_provider
+            callback_handler = provider.get_callback_handler(method_name)
+            if callback_handler:
+                callback_handler.after_http_request(span, response.http_response)
             span.end()
 
     def _add_http_attributes(

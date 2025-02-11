@@ -3,13 +3,16 @@
 # Licensed under the MIT License.
 # ------------------------------------
 from __future__ import annotations
-from typing import Optional, TYPE_CHECKING
+from collections.abc import Callable
+from typing import Optional, Any, TYPE_CHECKING
 
 from ._models import Attributes
 
 if TYPE_CHECKING:
+    from ...rest import HttpRequest, HttpResponse
     try:
         from .opentelemetry_tracer import OpenTelemetryTracer
+        from .opentelemetry_span import OpenTelemetrySpan
     except ImportError:
         pass
 
@@ -22,6 +25,22 @@ def _get_tracer_impl():
         return OpenTelemetryTracer
     except ImportError:
         return None
+
+
+class TracingCallbackHandler:
+    """A base callback handler for customizing spans in the tracing decorators and distributed tracing policy."""
+
+    def before_method(self, span: "OpenTelemetrySpan", *args: Any, **kwargs: Any) -> None:
+        """This method is called before the method is called in the tracing decorators."""
+
+    def after_method(self, span: "OpenTelemetrySpan", result: Any) -> None:
+        """This method is called after the method is called in the tracing decorators."""
+
+    def before_http_request(self, span: "OpenTelemetrySpan", request: "HttpRequest") -> None:
+        """This method is called before the HTTP request is sent in the DistributedHttpTracingPolicy."""
+
+    def after_http_request(self, span: "OpenTelemetrySpan", response: "HttpResponse") -> None:
+        """This method is called after the HTTP request is sent in the DistributedHttpTracingPolicy."""
 
 
 class TracerProvider:
@@ -52,6 +71,12 @@ class TracerProvider:
         self._library_version = library_version
         self._schema_url = schema_url
         self._attributes = attributes
+        self._callback_handlers = {}
+
+        # self._pre_method_callbacks = {}
+        # self._post_method_callbacks = {}
+        # self._pre_http_request_callbacks = {}
+        # self._post_http_request_callbacks = {}
 
     def get_tracer(self) -> Optional["OpenTelemetryTracer"]:
         """Get the OpenTelemetry tracer instance if available.
@@ -72,6 +97,39 @@ class TracerProvider:
                     attributes=self._attributes,
                 )
         return self._tracer
+
+
+    def add_callback_handler(self, method_qualified_name: str, handler: TracingCallbackHandler) -> None:
+        """Register a callback handler for the specified method."""
+        self._callback_handlers[method_qualified_name] = handler
+
+    def get_callback_handler(self, method_qualified_name: str) -> Optional[TracingCallbackHandler]:
+        """Get the callback handler for the specified method."""
+        return self._callback_handlers.get(method_qualified_name)
+
+    # def add_pre_method_callback(self, method_qualified_name: str, callback: Callable) -> None:
+    #     """Register a callback to be called before a method is traced."""
+    #     self._pre_method_callbacks[method_qualified_name] = callback
+
+    # def add_post_method_callback(self, method_qualified_name: str, callback: Callable) -> None:
+    #     """Register a callback to be called after a method is traced."""
+    #     self._post_method_callbacks[method_qualified_name] = callback
+
+    # def get_pre_method_callback(self, method_qualified_name: str) -> Optional[Callable]:
+    #     """Get the pre-method callback for the specified method."""
+    #     return self._pre_method_callbacks.get(method_qualified_name)
+
+    # def get_post_method_callback(self, method_qualified_name: str) -> Optional[Callable]:
+    #     """Get the post-method callback for the specified method."""
+    #     return self._post_method_callbacks.get(method_qualified_name)
+
+    # def add_post_http_request_callback(self, method_qualified_name: str, callback: Callable) -> None:
+    #     """Register a callback to be called after an HTTP request is traced."""
+    #     self._post_http_request_callbacks[method_qualified_name] = callback
+
+    # def get_post_http_request_callback(self, method_qualified_name: str) -> Optional[Callable]:
+    #     """Get the post-http-request callback for the specified method."""
+    #     return self._post_http_request_callbacks.get(method_qualified_name)
 
 
 default_tracer_provider = TracerProvider()
