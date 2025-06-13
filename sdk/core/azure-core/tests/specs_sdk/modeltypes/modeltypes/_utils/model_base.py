@@ -1004,6 +1004,7 @@ class _RestField:
     def __get__(self, obj: Model, type=None):  # pylint: disable=redefined-builtin
         # by this point, type and rest_name will have a value bc we default
         # them in __new__ of the Model class
+        print('----get-----', obj, self._rest_name, self._type, self._format)  # Debugging line to trace get
         item = obj.get(self._rest_name)
         if item is None:
             return item
@@ -1012,6 +1013,7 @@ class _RestField:
         return _deserialize(self._type, _serialize(item, self._format), rf=self)
 
     def __set__(self, obj: Model, value) -> None:
+        print('----set-----', obj, self._rest_name, value, self._type, self._format)  # Debugging line to trace set
         if value is None:
             # we want to wipe out entries if users set attr to None
             try:

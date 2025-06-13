@@ -6,7 +6,7 @@
 # --------------------------------------------------------------------------
 import base64
 from json import JSONEncoder
-from typing import Dict, Optional, Union, cast, Any
+from typing import Dict, Optional, Union, cast, Any, List, Protocol, ItemsView, runtime_checkable
 from datetime import datetime, date, time, timedelta
 from datetime import timezone
 
@@ -250,3 +250,148 @@ def as_attribute_dict(obj: Any, *, exclude_readonly: bool = False) -> Dict[str, 
     except AttributeError as exc:
         # not a typespec generated model
         raise TypeError("Object must be a generated model instance.") from exc
+
+
+def _convert_value(value, exclude_readonly: bool = False):
+    """Recursively convert values, handling nested models."""
+    if value is None or isinstance(value, _Null):
+        return None
+
+    # Handle Model instances recursively
+    if getattr(value, '_is_model', False):
+        return model_dump(value, exclude_readonly=exclude_readonly)
+
+    # Handle collections
+    if isinstance(value, (list, tuple)):
+        return [_convert_value(item, exclude_readonly=exclude_readonly) for item in value]
+    elif isinstance(value, set):
+        return [_convert_value(item, exclude_readonly=exclude_readonly) for item in value]  # Convert sets to lists for JSON compatibility
+    elif isinstance(value, dict):
+        return {k: _convert_value(v, exclude_readonly=exclude_readonly) for k, v in value.items()}
+
+    # Handle primitive types and other objects
+    return value
+
+
+@runtime_checkable
+class SerializableModel(Protocol):
+    """Protocol for models that can be serialized using model_dump."""
+
+    _is_model: bool = True
+    _attr_to_rest_field: Dict[str, "RestFieldProtocol"]
+
+    def items(self) -> ItemsView[str, Any]:
+        """Return items using REST field names as keys."""
+        ...
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Get value by REST field name."""
+        ...
+
+@runtime_checkable
+class RestFieldProtocol(Protocol):
+    """Protocol for rest field descriptors."""
+
+    _rest_name: str
+    _visibility: Optional[List[str]] = None
+    _is_multipart_file_input: bool = False
+
+
+def model_dump(model, *, exclude_readonly: bool = False) -> dict:
+    """Convert a model object to a dictionary using REST field names as keys.
+
+    This function recursively serializes a model object and all nested Model objects
+    to Python dictionaries, using the REST API field names as defined by the model's
+    rest field defintions.
+
+    :param model: The model object to convert to a dictionary
+    :type model: any
+    :keyword bool exclude_readonly: Whether to exclude readonly fields from the output
+    :return: A dictionary representation of the model with REST field names as keys
+    :rtype: dict
+    :raises TypeError: If the input is not a Model instance
+    """
+    if not getattr(model, '_is_model', False):
+        raise TypeError(f"Expected a Model instance, got {type(model).__name__}")
+
+    result = {}
+
+    # Get readonly properties if we need to exclude them
+    readonly_props = set()
+    if exclude_readonly and hasattr(model, '_attr_to_rest_field'):
+        readonly_props = {rf._rest_name for rf in model._attr_to_rest_field.values() if _is_readonly(rf)}
+
+    # Iterate through the model's items (which are stored with REST field names)
+    for key, value in model.items():
+        print(f"Processing key: {key}, value: {value}")  # Debugging output
+        # Skip readonly properties if requested
+        if exclude_readonly and key in readonly_props:
+            continue
+
+        # Handle multipart file inputs specially (don't convert them)
+        is_multipart_file_input = False
+        if hasattr(model, '_attr_to_rest_field'):
+            try:
+                rest_field = next(
+                    rf for rf in model._attr_to_rest_field.values()
+                    if rf._rest_name == key
+                )
+                is_multipart_file_input = getattr(rest_field, '_is_multipart_file_input', False)
+            except StopIteration:
+                pass
+
+        if is_multipart_file_input:
+            result[key] = value
+        else:
+            result[key] = _convert_value(value, exclude_readonly=exclude_readonly)
+
+    return result
+
+
+class SerializableMixin:
+    """Mixin to add serialization support to manual models."""
+
+    _is_model = True
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # Auto-generate _attr_to_rest_field from annotations and rest_field descriptors
+        cls._attr_to_rest_field = {}
+        for name, value in cls.__dict__.items():
+            if hasattr(value, '_rest_name'):
+                cls._attr_to_rest_field[name] = value
+
+    def items(self):
+        if hasattr(self, '_data'):
+            return self._data.items()
+        # Fallback: iterate through rest fields and get values
+        for field in self._attr_to_rest_field.values():
+            yield field._rest_name, getattr(self, field._rest_name, None)
+
+    def get(self, key, default=None):
+        if hasattr(self, '_data'):
+            return self._data.get(key, default)
+        return getattr(self, key, default)
+
+def create_rest_field_map(field_mapping: Dict[str, str],
+                         readonly_fields: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Helper to create _attr_to_rest_field mapping.
+
+    :param field_mapping: Dict mapping attribute names to REST field names
+    :param readonly_fields: List of attribute names that are readonly
+    """
+    readonly_fields = readonly_fields or []
+    return {
+        attr: MockRestField(
+            rest_name=rest_name,
+            visibility=["read"] if attr in readonly_fields else None
+        )
+        for attr, rest_name in field_mapping.items()
+    }
+
+
+class MockRestField:
+    def __init__(self, rest_name, visibility=None, is_multipart=False):
+        self._rest_name = rest_name
+        self._visibility = visibility
+        self._is_multipart_file_input = is_multipart

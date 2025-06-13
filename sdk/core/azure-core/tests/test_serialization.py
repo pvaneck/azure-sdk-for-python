@@ -9,9 +9,9 @@ import json
 import sys
 from typing import Any, Dict, List, Optional
 
-from azure.core.serialization import AzureJSONEncoder, NULL, as_attribute_dict, is_generated_model
+from azure.core.serialization import AzureJSONEncoder, NULL, as_attribute_dict, is_generated_model, model_dump
 import pytest
-from modeltypes._utils.model_base import Model as HybridModel, rest_field
+from modeltypes._utils.model_base import Model as HybridModel, rest_field, rest_discriminator
 from modeltypes._utils.serialization import Model as MsrestModel
 from modeltypes import models
 
@@ -1286,3 +1286,583 @@ def test_as_attribute_dict_additional_properties():
     msrest_model = MsrestPetAPTrue(additional_properties={"birthdate": "2017-12-13T02:29:51Z", "complexProperty": {"color": "Red"}}, name="Buddy")
     _tests(msrest_model)
     assert msrest_model.additional_properties == {"birthdate": "2017-12-13T02:29:51Z", "complexProperty": {"color": "Red"}}
+
+# Test cases for model_dump function
+class TestModelDump:
+    """Test cases for the model_dump function"""
+
+    def test_model_dump_basic_model(self):
+        """Test model_dump with a basic HybridModel"""
+        class BasicModel(HybridModel):
+            name: str = rest_field()
+            age: int = rest_field()
+            active: bool = rest_field()
+
+        model = BasicModel(
+            name="Alice",
+            age= 30,
+            active=True
+        )
+        result = model_dump(model)
+
+        expected = {"name": "Alice", "age": 30, "active": True}
+        assert result == expected
+
+    def test_model_dump_with_none_values(self):
+        """Test model_dump with None values"""
+        class ModelWithNone(HybridModel):
+            name: str = rest_field()
+            description: Optional[str] = rest_field()
+            count: Optional[int] = rest_field()
+
+        model = ModelWithNone({"name": "Test", "description": None, "count": None})
+        result = model_dump(model)
+
+        expected = {"name": "Test", "description": None, "count": None}
+        assert result == expected
+
+    def test_model_dump_nested_models(self):
+        """Test model_dump with nested HybridModel objects"""
+        class Address(HybridModel):
+            street: str = rest_field()
+            city: str = rest_field()
+            zip_code: str = rest_field(name="zipCode")
+
+        class Person(HybridModel):
+            name: str = rest_field()
+            address: Address = rest_field()
+
+        address = Address({"street": "123 Main St", "city": "Anytown", "zipCode": "12345"})
+        person = Person({"name": "John Doe", "address": address})
+
+        result = model_dump(person)
+
+        expected = {
+            "name": "John Doe",
+            "address": {
+                "street": "123 Main St",
+                "city": "Anytown",
+                "zipCode": "12345"
+            }
+        }
+        assert result == expected
+
+    def test_model_dump_with_lists(self):
+        """Test model_dump with list values containing models"""
+        class Tag(HybridModel):
+            name: str = rest_field()
+            value: str = rest_field()
+
+        class Item(HybridModel):
+            title: str = rest_field()
+            tags: List[Tag] = rest_field()
+            numbers: List[int] = rest_field()
+
+        tag1 = Tag({"name": "category", "value": "electronics"})
+        tag2 = Tag({"name": "brand", "value": "samsung"})
+
+        item = Item({
+            "title": "Smartphone",
+            "tags": [tag1, tag2],
+            "numbers": [1, 2, 3]
+        })
+
+        result = model_dump(item)
+
+        expected = {
+            "title": "Smartphone",
+            "tags": [
+                {"name": "category", "value": "electronics"},
+                {"name": "brand", "value": "samsung"}
+            ],
+            "numbers": [1, 2, 3]
+        }
+        assert result == expected
+
+    def test_model_dump_with_sets(self):
+        """Test model_dump with set values (should convert to lists)"""
+        class ModelWithSet(HybridModel):
+            name: str = rest_field()
+            categories: set = rest_field()
+
+        model = ModelWithSet({
+            "name": "Product",
+            "categories": {"electronics", "mobile", "devices"}
+        })
+
+        result = model_dump(model)
+
+        # Sets are converted to lists, order might vary
+        assert result["name"] == "Product"
+        assert isinstance(result["categories"], list)
+        assert set(result["categories"]) == {"electronics", "mobile", "devices"}
+
+    def test_model_dump_with_dict_values(self):
+        """Test model_dump with dictionary values"""
+        class ModelWithDict(HybridModel):
+            name: str = rest_field()
+            metadata: Dict[str, Any] = rest_field()
+
+        model = ModelWithDict({
+            "name": "Configuration",
+            "metadata": {
+                "version": "1.0",
+                "settings": {"debug": True, "timeout": 30}
+            }
+        })
+
+        result = model_dump(model)
+
+        expected = {
+            "name": "Configuration",
+            "metadata": {
+                "version": "1.0",
+                "settings": {"debug": True, "timeout": 30}
+            }
+        }
+        assert result == expected
+
+    def test_model_dump_exclude_readonly_false(self):
+        """Test model_dump with exclude_readonly=False (default)"""
+        class ModelWithReadonly(HybridModel):
+            name: str = rest_field()
+            readonly_field: str = rest_field(visibility=["read"])
+            normal_field: str = rest_field()
+
+        model = ModelWithReadonly({
+            "name": "Test",
+            "readonly_field": "readonly_value",
+            "normal_field": "normal_value"
+        })
+
+        result = model_dump(model, exclude_readonly=False)
+
+        expected = {
+            "name": "Test",
+            "readonly_field": "readonly_value",
+            "normal_field": "normal_value"
+        }
+        assert result == expected
+
+    def test_model_dump_exclude_readonly_true(self):
+        """Test model_dump with exclude_readonly=True"""
+        class ModelWithReadonly(HybridModel):
+            name: str = rest_field()
+            readonly_field: str = rest_field(visibility=["read"])
+            normal_field: str = rest_field()
+
+        model = ModelWithReadonly({
+            "name": "Test",
+            "readonly_field": "readonly_value",
+            "normal_field": "normal_value"
+        })
+
+        result = model_dump(model, exclude_readonly=True)
+
+        expected = {
+            "name": "Test",
+            "normal_field": "normal_value"
+        }
+        assert result == expected
+
+    def test_model_dump_with_multipart_file_input(self):
+        """Test model_dump with multipart file input fields"""
+        class FileUploadModel(HybridModel):
+            name: str = rest_field()
+            file_content: bytes = rest_field(is_multipart_file_input=True)
+            description: str = rest_field()
+
+        file_data = b"binary file content"
+        model = FileUploadModel({
+            "name": "document.pdf",
+            "file_content": file_data,
+            "description": "Important document"
+        })
+
+        result = model_dump(model)
+
+        # Multipart file inputs should not be converted
+        expected = {
+            "name": "document.pdf",
+            "file_content": file_data,
+            "description": "Important document"
+        }
+        assert result == expected
+
+    def test_model_dump_deeply_nested_models(self):
+        """Test model_dump with deeply nested model structures"""
+        class Config(HybridModel):
+            key: str = rest_field()
+            value: str = rest_field()
+
+        class Service(HybridModel):
+            name: str = rest_field()
+            config: Config = rest_field()
+
+        class Application(HybridModel):
+            app_name: str = rest_field(name="appName")
+            services: List[Service] = rest_field()
+
+        config1 = Config({"key": "timeout", "value": "30"})
+        config2 = Config({"key": "retries", "value": "3"})
+
+        service1 = Service({"name": "web", "config": config1})
+        service2 = Service({"name": "api", "config": config2})
+
+        app = Application({
+            "appName": "MyApp",
+            "services": [service1, service2]
+        })
+
+        result = model_dump(app)
+
+        expected = {
+            "appName": "MyApp",
+            "services": [
+                {
+                    "name": "web",
+                    "config": {"key": "timeout", "value": "30"}
+                },
+                {
+                    "name": "api",
+                    "config": {"key": "retries", "value": "3"}
+                }
+            ]
+        }
+        assert result == expected
+
+    def test_model_dump_mixed_collection_types(self):
+        """Test model_dump with mixed collection types (lists, tuples, sets)"""
+        class CollectionModel(HybridModel):
+            name: str = rest_field()
+            list_field: List[str] = rest_field()
+            tuple_field: tuple = rest_field()
+            set_field: set = rest_field()
+
+        model = CollectionModel({
+            "name": "Collections Test",
+            "list_field": ["a", "b", "c"],
+            "tuple_field": ("x", "y", "z"),
+            "set_field": {1, 2, 3}
+        })
+
+        result = model_dump(model)
+
+        assert result["name"] == "Collections Test"
+        assert result["list_field"] == ["a", "b", "c"]
+        assert result["tuple_field"] == ["x", "y", "z"]  # Tuples become lists
+        assert isinstance(result["set_field"], list)
+        assert set(result["set_field"]) == {1, 2, 3}  # Sets become lists
+
+    def test_model_dump_error_cases(self):
+        """Test model_dump error handling"""
+        # Test with non-model object
+        with pytest.raises(TypeError, match="Expected a Model instance"):
+            model_dump({"not": "a model"})
+
+        with pytest.raises(TypeError, match="Expected a Model instance"):
+            model_dump("string")
+
+        # Test with object that doesn't have _is_model attribute
+        class NotAModel:
+            pass
+
+        with pytest.raises(TypeError, match="Expected a Model instance"):
+            model_dump(NotAModel())
+
+    def test_model_dump_empty_model(self):
+        """Test model_dump with empty model"""
+        class EmptyModel(HybridModel):
+            pass
+
+        model = EmptyModel({})
+        result = model_dump(model)
+
+        assert result == {}
+
+    def test_model_dump_complex_nested_with_readonly(self):
+        """Test model_dump with complex nested structure and readonly fields"""
+        class InnerModel(HybridModel):
+            public_field: str = rest_field()
+            readonly_inner: str = rest_field(visibility=["read"])
+
+        class OuterModel(HybridModel):
+            name: str = rest_field()
+            readonly_outer: str = rest_field(visibility=["read"])
+            inner: InnerModel = rest_field()
+            inner_list: List[InnerModel] = rest_field()
+
+        inner1 = InnerModel({
+            "public_field": "public1",
+            "readonly_inner": "readonly1"
+        })
+
+        inner2 = InnerModel({
+            "public_field": "public2",
+            "readonly_inner": "readonly2"
+        })
+
+        outer = OuterModel({
+            "name": "outer",
+            "readonly_outer": "readonly_outer_value",
+            "inner": inner1,
+            "inner_list": [inner1, inner2]
+        })
+
+        # Test with exclude_readonly=False
+        result_with_readonly = model_dump(outer, exclude_readonly=False)
+        expected_with_readonly = {
+            "name": "outer",
+            "readonly_outer": "readonly_outer_value",
+            "inner": {
+                "public_field": "public1",
+                "readonly_inner": "readonly1"
+            },
+            "inner_list": [
+                {"public_field": "public1", "readonly_inner": "readonly1"},
+                {"public_field": "public2", "readonly_inner": "readonly2"}
+            ]
+        }
+        assert result_with_readonly == expected_with_readonly
+
+        # Test with exclude_readonly=True
+        result_without_readonly = model_dump(outer, exclude_readonly=True)
+        expected_without_readonly = {
+            "name": "outer",
+            "inner": {
+                "public_field": "public1"
+            },
+            "inner_list": [
+                {"public_field": "public1"},
+                {"public_field": "public2"}
+            ]
+        }
+        assert result_without_readonly == expected_without_readonly
+
+    def test_model_dump_with_rest_discriminator(self):
+        """Test model_dump with model containing rest_discriminator field"""
+        class BaseShape(HybridModel):
+            shape_type: str = rest_discriminator(name="shapeType")
+            name: str = rest_field()
+
+        class Circle(BaseShape, discriminator="circle"):
+            shape_type: str = rest_discriminator(name="shapeType")
+            radius: float = rest_field()
+
+        class Rectangle(BaseShape, discriminator="rectangle"):
+            shape_type: str = rest_discriminator(name="shapeType")
+            width: float = rest_field()
+            height: float = rest_field()
+
+        # Test with Circle
+        circle = Circle({
+            "shapeType": "circle",
+            "name": "My Circle",
+            "radius": 5.0
+        })
+
+        result_circle = model_dump(circle)
+        expected_circle = {
+            "shapeType": "circle",
+            "name": "My Circle",
+            "radius": 5.0
+        }
+        assert result_circle == expected_circle
+
+        # Test with Rectangle
+        rectangle = Rectangle({
+            "shapeType": "rectangle",
+            "name": "My Rectangle",
+            "width": 10.0,
+            "height": 8.0
+        })
+
+        result_rectangle = model_dump(rectangle)
+        expected_rectangle = {
+            "shapeType": "rectangle",
+            "name": "My Rectangle",
+            "width": 10.0,
+            "height": 8.0
+        }
+        assert result_rectangle == expected_rectangle
+
+    def test_model_dump_with_rest_discriminator_nested(self):
+        """Test model_dump with nested models containing rest_discriminator fields"""
+        class BaseVehicle(HybridModel):
+            __mapping__: Dict[str, HybridModel] = {}
+            vehicle_type: str = rest_discriminator(name="vehicleType")
+            brand: str = rest_field()
+
+        class Car(BaseVehicle, discriminator="car"):
+            vehicle_type: str = rest_discriminator(name="vehicleType")
+            doors: int = rest_field()
+
+        class Motorcycle(BaseVehicle, discriminator="motorcycle"):
+            vehicle_type: str = rest_discriminator(name="vehicleType")
+            engine_size: float = rest_field(name="engineSize")
+
+        class Fleet(HybridModel):
+            name: str = rest_field()
+            vehicles: List[BaseVehicle] = rest_field()
+
+        car = Car({
+            "vehicleType": "car",
+            "brand": "Toyota",
+            "doors": 4
+        })
+
+        motorcycle = Motorcycle({
+            "vehicleType": "motorcycle",
+            "brand": "Honda",
+            "engineSize": 650.0
+        })
+
+        fleet = Fleet({
+            "name": "Company Fleet",
+            "vehicles": [car, motorcycle]
+        })
+
+        result = model_dump(fleet)
+        expected = {
+            "name": "Company Fleet",
+            "vehicles": [
+                {
+                    "vehicleType": "car",
+                    "brand": "Toyota",
+                    "doors": 4
+                },
+                {
+                    "vehicleType": "motorcycle",
+                    "brand": "Honda",
+                    "engineSize": 650.0
+                }
+            ]
+        }
+        assert result == expected
+
+    def test_model_dump_with_rest_discriminator_readonly(self):
+        """Test model_dump with rest_discriminator field having readonly visibility"""
+        class BaseResource(HybridModel):
+            resource_type: str = rest_discriminator(name="resourceType", visibility=["read"])
+            name: str = rest_field()
+            status: str = rest_field()
+
+        class DatabaseResource(BaseResource, discriminator="database"):
+            resource_type: str = rest_discriminator(name="resourceType", visibility=["read"])
+            connection_string: str = rest_field(name="connectionString")
+
+        db_resource = DatabaseResource({
+            "resourceType": "database",
+            "name": "ProductionDB",
+            "status": "active",
+            "connectionString": "Server=localhost;Database=prod"
+        })
+
+        # Test with exclude_readonly=False (default)
+        result_with_readonly = model_dump(db_resource, exclude_readonly=False)
+        expected_with_readonly = {
+            "resourceType": "database",
+            "name": "ProductionDB",
+            "status": "active",
+            "connectionString": "Server=localhost;Database=prod"
+        }
+        assert result_with_readonly == expected_with_readonly
+
+        # Test with exclude_readonly=True
+        result_without_readonly = model_dump(db_resource, exclude_readonly=True)
+        expected_without_readonly = {
+            "name": "ProductionDB",
+            "status": "active",
+            "connectionString": "Server=localhost;Database=prod"
+        }
+        assert result_without_readonly == expected_without_readonly
+
+    def test_model_dump_datetime_serialization(self):
+        class HybridEvent(HybridModel):
+            event_id: str = rest_field(name="eventId")
+            start_time: datetime = rest_field(name="startTime")
+            end_time: datetime = rest_field(name="endTime")
+            created_date: date = rest_field(name="createdDate", format="date")
+            reminder_time: time = rest_field(name="reminderTime", format="time")
+            duration: timedelta = rest_field(format="duration")
+
+        event = HybridEvent(
+            event_id="evt123",
+            start_time=datetime(2023, 10, 1, 14, 30, 0),
+            end_time=datetime(2023, 10, 1, 16, 0, 0),
+            created_date=date(2023, 9, 30),
+            reminder_time=time(13, 0),
+            duration=timedelta(hours=1, minutes=30, seconds=15)
+        )
+
+        result = model_dump(event)
+        expected = {
+            "eventId": "evt123",
+            "startTime": "2023-10-01T14:30:00Z",
+            "endTime": "2023-10-01T16:00:00Z",
+            "createdDate": "2023-09-30",
+            "reminderTime": "13:00:00",
+            "duration": "PT01H30M15S"
+        }
+        assert result == expected
+
+    def test_model_dump_manual_model(self):
+        """Test model_dump with a manually defined model"""
+        class MySimpleModel:
+            _is_model = True
+
+            def __init__(self, name: str, age: int):
+                # Store data with REST field names directly
+                self._data = {
+                    "display_name": name,
+                    "age_years": age
+                }
+
+                # Define field metadata for serialization
+                self._attr_to_rest_field = {
+                    "name": MockRestField("display_name"),
+                    "age": MockRestField("age_years")
+                }
+
+            def items(self):
+                return self._data.items()
+
+            def get(self, key, default=None):
+                return self._data.get(key, default)
+
+        class MockRestField:
+            def __init__(self, rest_name, visibility=None, is_multipart=False):
+                self._rest_name = rest_name
+                self._visibility = visibility
+                self._is_multipart_file_input = is_multipart
+
+        simple_model = MySimpleModel(name="Test User", age=25)
+        result = model_dump(simple_model)
+        expected = {
+            "display_name": "Test User",
+            "age_years": 25
+        }
+        assert result == expected
+
+
+    def test_model_dump_with_serialization_mixin(self):
+        """Test model_dump with a model that uses SerializationMixin"""
+        from azure.core.serialization import SerializableMixin
+
+        class Person(SerializableMixin):
+            name: str = rest_field(name="full_name")
+            age: int = rest_field(name="age_years")
+            id: str = rest_field(name="person_id", visibility=["read"])
+
+            def __init__(self, name: str, age: int, id: str):
+                self._data = {
+                    "full_name": name,
+                    "age_years": age,
+                    "person_id": id
+                }
+
+        # Usage
+        person = Person("John Doe", 30, "123")
+        serialized = model_dump(person)  # {"full_name": "John Doe", "age_years": 30, "person_id": "123"}
+        assert serialized == {"full_name": "John Doe", "age_years": 30, "person_id": "123"}
+        serialized_no_readonly = model_dump(person, exclude_readonly=True)
