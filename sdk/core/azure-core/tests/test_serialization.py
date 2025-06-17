@@ -5,12 +5,19 @@
 import base64
 from datetime import date, datetime, time, timedelta, tzinfo
 from enum import Enum
-from typing import List
+from typing import List, Dict, Any, Optional
 import json
 import sys
 from io import BytesIO
 
-from azure.core.serialization import AzureJSONEncoder, NULL, as_attribute_dict, is_generated_model, model_dump
+from azure.core.serialization import (
+    AzureJSONEncoder,
+    NULL,
+    as_attribute_dict,
+    is_generated_model,
+    model_dump,
+    SerializableModel,
+)
 import pytest
 from modeltypes._utils.model_base import Model as HybridModel, rest_field, rest_discriminator
 from modeltypes import models
@@ -1237,5 +1244,663 @@ class TestModelDump:
             "createdDate": "2023-09-30",
             "reminderTime": "13:00:00",
             "duration": "PT01H30M15S",
+        }
+        assert result == expected
+
+
+class TestModelDumpManualModel:
+    """Test cases for the model_dump function with manually defined models"""
+
+    def test_model_dump_custom_manual_model(self):
+        """Test model_dump with a custom model implementation."""
+
+        class CustomModel(SerializableModel):
+
+            name: str
+            start_time: datetime
+            duration: timedelta
+            amount: float
+            tags: List[str]
+            attributes: Dict[str, Any]
+
+            _is_model = True
+            _rest_fields = {
+                "name": {},
+                "start_time": {"rest_name": "startTime", "format": "datetime"},
+                "amount": {},
+                "duration": {},
+                "tags": {"rest_name": "propertyTags"},
+                "attributes": {},
+            }
+
+            def __init__(
+                self,
+                name: str,
+                start_time: datetime,
+                duration: timedelta,
+                amount: float,
+                tags: List[str],
+                attributes: Dict[str, Any],
+            ):
+                self.name = name
+                self.start_time = start_time
+                self.duration = duration
+                self.amount = amount
+                self.tags = tags
+                self.attributes = attributes
+
+        custom_model = CustomModel(
+            name="Test Event",
+            start_time=datetime(2023, 10, 1, 14, 30, 0),
+            duration=timedelta(hours=1, minutes=30, seconds=15),
+            amount=99.99,
+            tags=["tag1", "tag2"],
+            attributes={"key1": "value1", "key2": "value2"},
+        )
+
+        result = model_dump(custom_model)
+        expected = {
+            "name": "Test Event",
+            "startTime": "2023-10-01T14:30:00Z",
+            "duration": "PT01H30M15S",
+            "amount": 99.99,
+            "propertyTags": ["tag1", "tag2"],
+            "attributes": {"key1": "value1", "key2": "value2"},
+        }
+        assert result == expected
+
+    def test_model_dump_custom_manual_nested(self):
+        """Test model_dump with a custom model that has nested structures."""
+
+        class NestedModel(SerializableModel):
+            key: str
+            value: str
+
+            _is_model = True
+            _rest_fields = {
+                "key": {},
+                "value": {},
+            }
+
+            def __init__(self, key: str, value: str):
+                self.key = key
+                self.value = value
+
+        class CustomNestedModel(SerializableModel):
+            name: str
+            nested: NestedModel
+
+            _is_model = True
+            _rest_fields = {
+                "name": {},
+                "nested": {"rest_name": "nestedModel"},
+            }
+
+            def __init__(self, name: str, nested: NestedModel):
+                self.name = name
+                self.nested = nested
+
+        nested_instance = NestedModel(key="nestedKey", value="nestedValue")
+        custom_nested_model = CustomNestedModel(name="Custom Model", nested=nested_instance)
+
+        result = model_dump(custom_nested_model)
+        expected = {
+            "name": "Custom Model",
+            "nestedModel": {"key": "nestedKey", "value": "nestedValue"},
+        }
+        assert result == expected
+
+    def test_model_dump_custom_manual_with_readonly(self):
+        """Test model_dump with a custom model that has readonly fields."""
+
+        class ReadonlyModel(SerializableModel):
+            name: str
+            readonly_field: str
+            _is_model = True
+            _rest_fields = {
+                "name": {},
+                "readonly_field": {"rest_name": "readonlyField", "readonly": True},
+            }
+
+            def __init__(self, name: str, readonly_field: str):
+                self.name = name
+                self.readonly_field = readonly_field
+
+        model = ReadonlyModel(name="Test Model", readonly_field="Readonly Value")
+
+        # Test with exclude_readonly=False (default)
+        result_with_readonly = model_dump(model, exclude_readonly=False)
+        expected_with_readonly = {
+            "name": "Test Model",
+            "readonlyField": "Readonly Value",
+        }
+        assert result_with_readonly == expected_with_readonly
+
+        # Test with exclude_readonly=True
+        result_without_readonly = model_dump(model, exclude_readonly=True)
+        expected_without_readonly = {
+            "name": "Test Model",
+        }
+        assert result_without_readonly == expected_without_readonly
+
+    def test_modeL_dump_custom_manual_model_multiple_instantiations(self):
+        """Test model_dump with multiple instances of a custom model."""
+
+        class MultiInstanceModel:
+            name: str
+            value: int
+
+            _is_model = True
+            _rest_fields = {
+                "name": {},
+                "value": {},
+            }
+
+            def __init__(self, name: str, value: int):
+                self.name = name
+                self.value = value
+
+        instance1 = MultiInstanceModel(name="Instance 1", value=10)
+        instance2 = MultiInstanceModel(name="Instance 2", value=20)
+
+        result1 = model_dump(instance1)
+        result2 = model_dump(instance2)
+
+        expected1 = {"name": "Instance 1", "value": 10}
+        expected2 = {"name": "Instance 2", "value": 20}
+
+        assert result1 == expected1
+        assert result2 == expected2
+
+        instance2.name = "Updated Instance 2"
+        result2_updated = model_dump(instance2)
+        expected2_updated = {"name": "Updated Instance 2", "value": 20}
+        assert result2_updated == expected2_updated
+
+    def test_model_dump_custom_manual_with_inheritance(self):
+        """Test model_dump with a custom model that uses inheritance."""
+
+        class BaseModel:
+            base_field: str
+
+            _is_model = True
+            _rest_fields = {
+                "base_field": {"rest_name": "baseField"},
+            }
+
+            def __init__(self, base_field: str):
+                self.base_field = base_field
+
+        class DerivedModel(BaseModel):
+            derived_field: int
+
+            _rest_fields = {
+                "derived_field": {"rest_name": "derivedField"},
+            }
+
+            def __init__(self, base_field: str, derived_field: int):
+                self.derived_field = derived_field
+                super().__init__(base_field)
+
+        model = DerivedModel(base_field="Base Value", derived_field=42)
+
+        result = model_dump(model)
+        expected = {"baseField": "Base Value", "derivedField": 42}
+        assert result == expected
+
+    def test_model_dump_polymorphic_inheritance_chain(self):
+        """Test model_dump with complex polymorphic inheritance chains."""
+
+        class Vehicle(SerializableModel):
+            vehicle_type: str
+            make: str
+            model: str
+
+            _is_model = True
+            _rest_fields = {
+                "vehicle_type": {"rest_name": "vehicleType"},
+                "make": {},
+                "model": {"rest_name": "modelName"},
+            }
+
+            def __init__(self, vehicle_type: str, make: str, model: str):
+                self.vehicle_type = vehicle_type
+                self.make = make
+                self.model = model
+
+        class Car(Vehicle):
+            doors: int
+            fuel_type: str
+
+            _rest_fields = {
+                "doors": {},
+                "fuel_type": {"rest_name": "fuelType"},
+            }
+
+            def __init__(self, make: str, model: str, doors: int, fuel_type: str):
+                super().__init__("car", make, model)
+                self.doors = doors
+                self.fuel_type = fuel_type
+
+        class ElectricCar(Car):
+            battery_capacity: float
+            charging_time: int
+
+            _rest_fields = {
+                "battery_capacity": {"rest_name": "batteryCapacity"},
+                "charging_time": {"rest_name": "chargingTime"},
+            }
+
+            def __init__(self, make: str, model: str, doors: int, battery_capacity: float, charging_time: int):
+                super().__init__(make, model, doors, "electric")
+                self.battery_capacity = battery_capacity
+                self.charging_time = charging_time
+
+        electric_car = ElectricCar(make="Tesla", model="Model 3", doors=4, battery_capacity=75.0, charging_time=45)
+
+        result = model_dump(electric_car)
+        expected = {
+            "vehicleType": "car",
+            "make": "Tesla",
+            "modelName": "Model 3",
+            "doors": 4,
+            "fuelType": "electric",
+            "batteryCapacity": 75.0,
+            "chargingTime": 45,
+        }
+        assert result == expected
+
+    def test_model_dump_polymorphic_collections(self):
+        """Test model_dump with collections containing polymorphic models."""
+
+        class Animal(SerializableModel):
+            name: str
+            species: str
+
+            _is_model = True
+            _rest_fields = {
+                "name": {},
+                "species": {},
+            }
+
+            def __init__(self, name: str, species: str):
+                self.name = name
+                self.species = species
+
+        class Dog(Animal):
+            breed: str
+            is_good_boy: bool
+
+            _rest_fields = {
+                "breed": {},
+                "is_good_boy": {"rest_name": "isGoodBoy"},
+            }
+
+            def __init__(self, name: str, breed: str, is_good_boy: bool = True):
+                super().__init__(name, "dog")
+                self.breed = breed
+                self.is_good_boy = is_good_boy
+
+        class Cat(Animal):
+            indoor_only: bool
+            lives_remaining: int
+
+            _rest_fields = {
+                "indoor_only": {"rest_name": "indoorOnly"},
+                "lives_remaining": {"rest_name": "livesRemaining"},
+            }
+
+            def __init__(self, name: str, indoor_only: bool, lives_remaining: int = 9):
+                super().__init__(name, "cat")
+                self.indoor_only = indoor_only
+                self.lives_remaining = lives_remaining
+
+        class AnimalShelter(SerializableModel):
+            name: str
+            animals: List[Animal]
+            featured_pet: Animal
+
+            _is_model = True
+            _rest_fields = {
+                "name": {},
+                "animals": {},
+                "featured_pet": {"rest_name": "featuredPet"},
+            }
+
+            def __init__(self, name: str, animals: List[Animal], featured_pet: Animal):
+                self.name = name
+                self.animals = animals
+                self.featured_pet = featured_pet
+
+        dog = Dog(name="Buddy", breed="Golden Retriever")
+        cat = Cat(name="Whiskers", indoor_only=True, lives_remaining=8)
+        shelter = AnimalShelter(name="Happy Paws Shelter", animals=[dog, cat], featured_pet=dog)
+
+        result = model_dump(shelter)
+        expected = {
+            "name": "Happy Paws Shelter",
+            "animals": [
+                {"name": "Buddy", "species": "dog", "breed": "Golden Retriever", "isGoodBoy": True},
+                {"name": "Whiskers", "species": "cat", "indoorOnly": True, "livesRemaining": 8},
+            ],
+            "featuredPet": {"name": "Buddy", "species": "dog", "breed": "Golden Retriever", "isGoodBoy": True},
+        }
+        assert result == expected
+
+    def test_model_dump_polymorphic_with_circular_references(self):
+        """Test model_dump with polymorphic models that have circular references."""
+
+        class Person(SerializableModel):
+            name: str
+            person_type: str
+            manager: Optional["Person"]
+
+            _is_model = True
+            _rest_fields = {
+                "name": {},
+                "person_type": {"rest_name": "personType"},
+                "manager": {},
+            }
+
+            def __init__(self, name: str, person_type: str, manager: Optional["Person"] = None):
+                self.name = name
+                self.person_type = person_type
+                self.manager = manager
+
+        class Employee(Person):
+            employee_id: str
+            department: str
+
+            _rest_fields = {
+                "employee_id": {"rest_name": "employeeId"},
+                "department": {},
+            }
+
+            def __init__(self, name: str, employee_id: str, department: str, manager: Optional[Person] = None):
+                super().__init__(name, "employee", manager)
+                self.employee_id = employee_id
+                self.department = department
+
+        class Manager(Employee):
+            team_size: int
+
+            _rest_fields = {
+                "team_size": {"rest_name": "teamSize"},
+            }
+
+            def __init__(self, name: str, employee_id: str, department: str, team_size: int):
+                super().__init__(name, employee_id, department)
+                self.person_type = "manager"
+                self.team_size = team_size
+
+        manager = Manager(name="Alice Smith", employee_id="M001", department="Engineering", team_size=5)
+
+        employee = Employee(name="Bob Johnson", employee_id="E001", department="Engineering", manager=manager)
+
+        result = model_dump(employee)
+        expected = {
+            "name": "Bob Johnson",
+            "personType": "employee",
+            "manager": {
+                "name": "Alice Smith",
+                "personType": "manager",
+                "manager": None,
+                "employeeId": "M001",
+                "department": "Engineering",
+                "teamSize": 5,
+            },
+            "employeeId": "E001",
+            "department": "Engineering",
+        }
+        assert result == expected
+
+    def test_model_dump_polymorphic_with_readonly_discriminator(self):
+        """Test model_dump with polymorphic models where discriminator is readonly."""
+
+        class BaseResource(SerializableModel):
+            resource_id: str
+            resource_type: str
+            name: str
+
+            _is_model = True
+            _rest_fields = {
+                "resource_id": {"rest_name": "resourceId", "readonly": True},
+                "resource_type": {"rest_name": "resourceType", "readonly": True},
+                "name": {},
+            }
+
+            def __init__(self, resource_id: str, resource_type: str, name: str):
+                self.resource_id = resource_id
+                self.resource_type = resource_type
+                self.name = name
+
+        class StorageResource(BaseResource):
+            storage_type: str
+            capacity_gb: int
+
+            _rest_fields = {
+                "storage_type": {"rest_name": "storageType"},
+                "capacity_gb": {"rest_name": "capacityGb"},
+            }
+
+            def __init__(self, resource_id: str, name: str, storage_type: str, capacity_gb: int):
+                super().__init__(resource_id, "storage", name)
+                self.storage_type = storage_type
+                self.capacity_gb = capacity_gb
+
+        storage = StorageResource(
+            resource_id="stor-123", name="Production Storage", storage_type="blob", capacity_gb=1000
+        )
+
+        # Test with readonly fields included
+        result_with_readonly = model_dump(storage, exclude_readonly=False)
+        expected_with_readonly = {
+            "resourceId": "stor-123",
+            "resourceType": "storage",
+            "name": "Production Storage",
+            "storageType": "blob",
+            "capacityGb": 1000,
+        }
+        assert result_with_readonly == expected_with_readonly
+
+        # Test with readonly fields excluded
+        result_without_readonly = model_dump(storage, exclude_readonly=True)
+        expected_without_readonly = {"name": "Production Storage", "storageType": "blob", "capacityGb": 1000}
+        assert result_without_readonly == expected_without_readonly
+
+    def test_model_dump_polymorphic_deeply_nested(self):
+        """Test model_dump with deeply nested polymorphic structures."""
+
+        class Component(SerializableModel):
+            component_id: str
+            component_type: str
+
+            _is_model = True
+            _rest_fields = {
+                "component_id": {"rest_name": "componentId"},
+                "component_type": {"rest_name": "componentType"},
+            }
+
+            def __init__(self, component_id: str, component_type: str):
+                self.component_id = component_id
+                self.component_type = component_type
+
+        class Container(Component):
+            children: List[Component]
+
+            _rest_fields = {
+                "children": {},
+            }
+
+            def __init__(self, component_id: str, children: List[Component]):
+                super().__init__(component_id, "container")
+                self.children = children
+
+        class Button(Component):
+            label: str
+            disabled: bool
+
+            _rest_fields = {
+                "label": {},
+                "disabled": {},
+            }
+
+            def __init__(self, component_id: str, label: str, disabled: bool = False):
+                super().__init__(component_id, "button")
+                self.label = label
+                self.disabled = disabled
+
+        class Form(Container):
+            action: str
+            method: str
+
+            _rest_fields = {
+                "action": {},
+                "method": {},
+            }
+
+            def __init__(self, component_id: str, action: str, method: str, children: List[Component]):
+                super().__init__(component_id, children)
+                self.component_type = "form"
+                self.action = action
+                self.method = method
+
+        submit_button = Button("btn-submit", "Submit")
+        cancel_button = Button("btn-cancel", "Cancel", disabled=True)
+
+        inner_container = Container("container-buttons", [submit_button, cancel_button])
+        form = Form("form-main", "/api/submit", "POST", [inner_container])
+
+        result = model_dump(form)
+        expected = {
+            "componentId": "form-main",
+            "componentType": "form",
+            "children": [
+                {
+                    "componentId": "container-buttons",
+                    "componentType": "container",
+                    "children": [
+                        {"componentId": "btn-submit", "componentType": "button", "label": "Submit", "disabled": False},
+                        {"componentId": "btn-cancel", "componentType": "button", "label": "Cancel", "disabled": True},
+                    ],
+                }
+            ],
+            "action": "/api/submit",
+            "method": "POST",
+        }
+        assert result == expected
+
+    def test_model_dump_polymorphic_with_mixed_types(self):
+        """Test model_dump with polymorphic models containing various data types."""
+
+        class ConfigValue(SerializableModel):
+            key: str
+            value_type: str
+
+            _is_model = True
+            _rest_fields = {
+                "key": {},
+                "value_type": {"rest_name": "valueType"},
+            }
+
+            def __init__(self, key: str, value_type: str):
+                self.key = key
+                self.value_type = value_type
+
+        class StringConfig(ConfigValue):
+            string_value: str
+
+            _rest_fields = {
+                "string_value": {"rest_name": "stringValue"},
+            }
+
+            def __init__(self, key: str, string_value: str):
+                super().__init__(key, "string")
+                self.string_value = string_value
+
+        class NumberConfig(ConfigValue):
+            number_value: float
+            min_value: Optional[float]
+            max_value: Optional[float]
+
+            _rest_fields = {
+                "number_value": {"rest_name": "numberValue"},
+                "min_value": {"rest_name": "minValue"},
+                "max_value": {"rest_name": "maxValue"},
+            }
+
+            def __init__(
+                self,
+                key: str,
+                number_value: float,
+                min_value: Optional[float] = None,
+                max_value: Optional[float] = None,
+            ):
+                super().__init__(key, "number")
+                self.number_value = number_value
+                self.min_value = min_value
+                self.max_value = max_value
+
+        class DateTimeConfig(ConfigValue):
+            datetime_value: datetime
+            timezone: str
+
+            _rest_fields = {
+                "datetime_value": {"rest_name": "datetimeValue", "format": "datetime"},
+                "timezone": {},
+            }
+
+            def __init__(self, key: str, datetime_value: datetime, timezone: str = "UTC"):
+                super().__init__(key, "datetime")
+                self.datetime_value = datetime_value
+                self.timezone = timezone
+
+        class ConfigCollection(SerializableModel):
+            name: str
+            configs: List[ConfigValue]
+            metadata: Dict[str, Any]
+
+            _is_model = True
+            _rest_fields = {
+                "name": {},
+                "configs": {},
+                "metadata": {},
+            }
+
+            def __init__(self, name: str, configs: List[ConfigValue], metadata: Dict[str, Any]):
+                self.name = name
+                self.configs = configs
+                self.metadata = metadata
+
+        string_config = StringConfig("app_name", "MyApplication")
+        number_config = NumberConfig("max_connections", 100.0, min_value=1.0, max_value=1000.0)
+        datetime_config = DateTimeConfig("last_updated", datetime(2023, 10, 1, 12, 0, 0), "America/New_York")
+
+        collection = ConfigCollection(
+            name="Production Config",
+            configs=[string_config, number_config, datetime_config],
+            metadata={"environment": "prod", "version": "1.2.3"},
+        )
+
+        result = model_dump(collection)
+        expected = {
+            "name": "Production Config",
+            "configs": [
+                {"key": "app_name", "valueType": "string", "stringValue": "MyApplication"},
+                {
+                    "key": "max_connections",
+                    "valueType": "number",
+                    "numberValue": 100.0,
+                    "minValue": 1.0,
+                    "maxValue": 1000.0,
+                },
+                {
+                    "key": "last_updated",
+                    "valueType": "datetime",
+                    "datetimeValue": "2023-10-01T12:00:00Z",
+                    "timezone": "America/New_York",
+                },
+            ],
+            "metadata": {"environment": "prod", "version": "1.2.3"},
         }
         assert result == expected
