@@ -37,17 +37,17 @@ $loginServer = $DeploymentOutputs['IDENTITY_ACR_LOGIN_SERVER']
 
 
 # Azure Functions app deployment
-$image = "$loginServer/identity-functions-test-image"
-docker build --no-cache -t $image "$workingFolder/azure-functions"
-docker push $image
+# $image = "$loginServer/identity-functions-test-image"
+# docker build --no-cache -t $image "$workingFolder/azure-functions"
+# docker push $image
 
-az functionapp config container set -g $DeploymentOutputs['IDENTITY_RESOURCE_GROUP'] -n $DeploymentOutputs['IDENTITY_FUNCTION_NAME'] -i $image -r $loginServer -p $(az acr credential show -n $DeploymentOutputs['IDENTITY_ACR_NAME'] --query "passwords[0].value" -o tsv) -u $(az acr credential show -n $DeploymentOutputs['IDENTITY_ACR_NAME'] --query username -o tsv)
+# az functionapp config container set -g $DeploymentOutputs['IDENTITY_RESOURCE_GROUP'] -n $DeploymentOutputs['IDENTITY_FUNCTION_NAME'] -i $image -r $loginServer -p $(az acr credential show -n $DeploymentOutputs['IDENTITY_ACR_NAME'] --query "passwords[0].value" -o tsv) -u $(az acr credential show -n $DeploymentOutputs['IDENTITY_ACR_NAME'] --query username -o tsv)
 
 
 # Azure Web Apps app deployment
-Compress-Archive -Path "$workingFolder/azure-web-apps/*" -DestinationPath "$workingFolder/azure-web-apps/app.zip" -Force
-az webapp deploy --resource-group $DeploymentOutputs['IDENTITY_RESOURCE_GROUP'] --name $DeploymentOutputs['IDENTITY_WEBAPP_NAME'] --src-path "$workingFolder/azure-web-apps/app.zip" --async true
-Remove-Item -Force "$workingFolder/azure-web-apps/app.zip"
+# Compress-Archive -Path "$workingFolder/azure-web-apps/*" -DestinationPath "$workingFolder/azure-web-apps/app.zip" -Force
+# az webapp deploy --resource-group $DeploymentOutputs['IDENTITY_RESOURCE_GROUP'] --name $DeploymentOutputs['IDENTITY_WEBAPP_NAME'] --src-path "$workingFolder/azure-web-apps/app.zip" --async true
+# Remove-Item -Force "$workingFolder/azure-web-apps/app.zip"
 
 
 # Azure Kubernetes Service deployment
@@ -118,26 +118,26 @@ kubectl apply -f "$workingFolder/kubeconfig.yaml" --overwrite=true
 Write-Host "Applied kubeconfig.yaml"
 
 # Virtual machine setup
-$vmScript = @"
-sudo apt update && sudo apt install python3-pip -y --no-install-recommends &&
-git clone https://github.com/Azure/azure-sdk-for-python.git --depth 1 --single-branch --branch main /sdk &&
-cd /sdk/sdk/identity/azure-identity/tests/integration/azure-vms && pip install --upgrade pip setuptools wheel &&
-pip install -r requirements.txt
-"@
-az vm run-command invoke -n $DeploymentOutputs['IDENTITY_VM_NAME'] -g $DeploymentOutputs['IDENTITY_RESOURCE_GROUP'] --command-id RunShellScript --scripts "$vmScript"
+# $vmScript = @"
+# sudo apt update && sudo apt install python3-pip -y --no-install-recommends &&
+# git clone https://github.com/Azure/azure-sdk-for-python.git --depth 1 --single-branch --branch main /sdk &&
+# cd /sdk/sdk/identity/azure-identity/tests/integration/azure-vms && pip install --upgrade pip setuptools wheel &&
+# pip install -r requirements.txt
+# "@
+# az vm run-command invoke -n $DeploymentOutputs['IDENTITY_VM_NAME'] -g $DeploymentOutputs['IDENTITY_RESOURCE_GROUP'] --command-id RunShellScript --scripts "$vmScript"
 
 
-# ACI is easier to provision here than in the bicep file because the image isn't available before now
-Write-Host "Deploying Azure Container Instance"
-az container create -g $($DeploymentOutputs['IDENTITY_RESOURCE_GROUP']) -n $($DeploymentOutputs['IDENTITY_CONTAINER_INSTANCE_NAME']) --image $image `
-  --acr-identity $($DeploymentOutputs['IDENTITY_USER_DEFINED_IDENTITY']) `
-  --assign-identity [system] $($DeploymentOutputs['IDENTITY_USER_DEFINED_IDENTITY']) `
-  --cpu 1 `
-  --memory 1.0 `
-  --os-type Linux `
-  --role "Storage Blob Data Reader" `
-  --scope $($DeploymentOutputs['IDENTITY_STORAGE_ID_1']) `
-  -e IDENTITY_STORAGE_NAME=$($DeploymentOutputs['IDENTITY_STORAGE_NAME_1']) `
-     IDENTITY_STORAGE_NAME_USER_ASSIGNED=$($DeploymentOutputs['IDENTITY_STORAGE_NAME_2']) `
-     IDENTITY_USER_DEFINED_IDENTITY_CLIENT_ID=$($DeploymentOutputs['IDENTITY_USER_DEFINED_IDENTITY_CLIENT_ID']) `
-     FUNCTIONS_CUSTOMHANDLER_PORT=80
+# # ACI is easier to provision here than in the bicep file because the image isn't available before now
+# Write-Host "Deploying Azure Container Instance"
+# az container create -g $($DeploymentOutputs['IDENTITY_RESOURCE_GROUP']) -n $($DeploymentOutputs['IDENTITY_CONTAINER_INSTANCE_NAME']) --image $image `
+#   --acr-identity $($DeploymentOutputs['IDENTITY_USER_DEFINED_IDENTITY']) `
+#   --assign-identity [system] $($DeploymentOutputs['IDENTITY_USER_DEFINED_IDENTITY']) `
+#   --cpu 1 `
+#   --memory 1.0 `
+#   --os-type Linux `
+#   --role "Storage Blob Data Reader" `
+#   --scope $($DeploymentOutputs['IDENTITY_STORAGE_ID_1']) `
+#   -e IDENTITY_STORAGE_NAME=$($DeploymentOutputs['IDENTITY_STORAGE_NAME_1']) `
+#      IDENTITY_STORAGE_NAME_USER_ASSIGNED=$($DeploymentOutputs['IDENTITY_STORAGE_NAME_2']) `
+#      IDENTITY_USER_DEFINED_IDENTITY_CLIENT_ID=$($DeploymentOutputs['IDENTITY_USER_DEFINED_IDENTITY_CLIENT_ID']) `
+#      FUNCTIONS_CUSTOMHANDLER_PORT=80
