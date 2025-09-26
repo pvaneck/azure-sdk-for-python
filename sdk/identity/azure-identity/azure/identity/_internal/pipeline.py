@@ -2,6 +2,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 # ------------------------------------
+import logging
 from azure.core.configuration import Configuration
 from azure.core.pipeline import Pipeline
 from azure.core.pipeline.policies import (
@@ -85,6 +86,10 @@ def build_async_pipeline(transport=None, policies=None, **kwargs):
         config = _get_config(**kwargs)
         retry_policy_class = kwargs.pop("retry_policy_class", None)
         config.retry_policy = retry_policy_class(**kwargs) if retry_policy_class else AsyncRetryPolicy(**kwargs)
+
+        logger = logging.getLogger("azure.identity.cache-debug")
+        kwargs.setdefault("logger", logger)
+        config.http_logging_policy = HttpLoggingPolicy(**kwargs)
         policies = _get_policies(config, **kwargs)
     if not transport:
         from azure.core.pipeline.transport import (  # pylint: disable=non-abstract-transport-import, no-name-in-module
