@@ -21,6 +21,8 @@
   - [Known uses of token request parameters](#known-uses-of-token-request-parameters)
   - [BearerTokenCredentialPolicy and AsyncBearerTokenCredentialPolicy](#bearertokencredentialpolicy-and-asyncbearertokencredentialpolicy)
 - [Long-running operation (LRO) customization](#long-running-operation-lro-customization)
+- [Custom serialization](#custom-serialization)
+  - [TypeHandlerRegistry](#typehandlerregistry)
 
 ## Pipeline
 
@@ -743,6 +745,177 @@ authentication_policy = BearerTokenCredentialPolicy(credential, scopes, enable_c
 ## Long-running operation (LRO) customization
 
 See [doc/dev/customize_long_running_operation.md](https://github.com/Azure/azure-sdk-for-python/blob/main/doc/dev/customize_long_running_operation.md) for more information.
+
+## Custom Serializers
+
+TypeSpec-generated SDKs come with serialization and deserialization support for TypeSpec generated models. In some cases, users might have external types as part of their models using the [`@alternateType`](https://azure.github.io/typespec-azure/docs/libraries/typespec-client-generator-core/reference/decorators/#@Azure.ClientGenerator.Core.alternateType) decorator.
+
+To enable serialization and deserialization of these types, Azure Core provides a `TypeHandlerRegistry` class. Each SDK will have its own instance of this class, which users can use to register custom handlers. This instance will be located in the generated `_utils/model_base.py` file as `TYPE_HANDLER_REGISTRY`. Users can register custom type handlers using this registry.
+
+### Basic Usage
+
+The typical place to register handler functions is in your `models/_patch.py` file. Here are basic examples for both specific types and predicate-based matching:
+
+#### Type-Specific Handlers
+
+For simple external types, register handlers for specific types:
+
+```python
+from .._utils.model_base import TYPE_HANDLER_REGISTRY
+
+@TYPE_HANDLER_REGISTRY.register_serializer(ExternalModel)
+def serialize_external_model(value: ExternalModel) -> dict:
+    """Serialize an ExternalModel instance to a dictionary."""
+    return {
+        "id": value.id,
+        "name": value.name,
+        "data": value.to_dict()  # Assuming ExternalModel has a to_dict method
+    }
+
+@TYPE_HANDLER_REGISTRY.register_deserializer(ExternalModel)
+def deserialize_external_model(cls: Type[ExternalModel], data: dict) -> ExternalModel:
+    """Deserialize a dictionary to an ExternalModel instance."""
+    return cls(
+        id=data["id"],
+        name=data["name"],
+        **data.get("data", {})
+    )
+```
+
+#### Predicate-Based Handlers
+
+For more flexible matching (e.g., handling multiple related types), use predicate functions:
+
+```python
+from .._utils.model_base import TYPE_HANDLER_REGISTRY
+
+# Handle all subclasses of a base type
+@TYPE_HANDLER_REGISTRY.register_serializer(lambda x: isinstance(x, BaseExternalModel))
+def serialize_base_external_model(value: BaseExternalModel) -> dict:
+    """Serialize any BaseExternalModel subclass."""
+    return {
+        "type": value.__class__.__name__,
+        "data": value.serialize()  # Assuming a common serialize method
+    }
+
+@TYPE_HANDLER_REGISTRY.register_deserializer(lambda t: issubclass(t, BaseExternalModel))
+def deserialize_base_external_model(cls: Type[BaseExternalModel], data: dict) -> BaseExternalModel:
+    """Deserialize to the appropriate BaseExternalModel subclass."""
+    return cls.deserialize(data["data"])  # Assuming a common deserialize class method
+```
+
+### Advanced Scenarios
+
+#### Union Types and Polymorphic Deserialization
+
+When working with union types containing external models, you may need more sophisticated logic:
+
+```python
+from typing import Union
+from .._utils.model_base import TYPE_HANDLER_REGISTRY
+
+class ExternalModelA:
+    def __init__(self, foo: str, bar: int = None):
+        self.foo = foo
+        self.bar = bar
+
+class ExternalModelB:
+    def __init__(self, biz: int, baz: str = None):
+        self.biz = biz
+        self.baz = baz
+
+def multi_external_deserializer(cls: Type, data: dict) -> Union[ExternalModelA, ExternalModelB]:
+    """Deserialize based on data content to determine the correct type."""
+    if "foo" in data:
+        return ExternalModelA(foo=data["foo"], bar=data.get("bar"))
+    elif "biz" in data:
+        return ExternalModelB(biz=data["biz"], baz=data.get("baz"))
+    else:
+        raise ValueError(f"Cannot determine type for data: {data}")
+
+# Register for multiple types using a predicate
+TYPE_HANDLER_REGISTRY.register_deserializer(
+    lambda t: t in (ExternalModelA, ExternalModelB)
+)(multi_external_deserializer)
+```
+
+#### Complex Nested Structures
+
+For external models that contain other external models:
+
+```python
+# Example external models
+class ExternalModelA:
+    def __init__(self, value: int):
+        self.value = value
+
+class ExternalModelB:
+    def __init__(self, items: List[ExternalModelA]):
+        self.items = items
+
+# Example generated model containing external types
+class ParentModel(HybridModel):
+    nested_items: List[ExternalModelB] = rest_field(visibility=["read", "create", "update", "delete", "query"])
+
+
+@TYPE_HANDLER_REGISTRY.register_serializer(ExternalModelB)
+def serialize_nested_external(value: ExternalModelB) -> dict:
+    """Handle nested external models in serialization."""
+    return {
+        "items": [
+            # Option 1: Let the serializer handle nested external models automatically. However, this requires that serializers for ExternalModelA are registered.
+            item for item in value.nested_items
+
+            # Option 2: Manually serialize nested external models. Does not require serializers for ExternalModelA to be registered.
+            {"value": item.value} for item in value.items
+
+        ],
+    }
+```
+
+### Error Handling and Best Practices
+
+#### Performance Considerations
+
+The `TypeHandlerRegistry` includes built-in caching for performance. However, keep these best practices in mind:
+
+- **Avoid expensive operations** in serializer/deserializer functions as they may be called frequently
+- **Use specific type registration** when possible, as it's faster than predicate matching
+
+#### Manual Registration
+
+You can also register handlers without using the decorator syntax:
+
+```python
+def custom_serializer(value: CustomModel) -> dict:
+    return {"custom": value.custom_field}
+
+def custom_deserializer(cls: Type[CustomModel], data: dict) -> CustomModel:
+    return cls(custom_field=data["custom"])
+
+# Manual registration
+TYPE_HANDLER_REGISTRY.register_serializer(CustomModel)(custom_serializer)
+TYPE_HANDLER_REGISTRY.register_deserializer(CustomModel)(custom_deserializer)
+```
+
+### Integration with Pydantic Models
+
+For Pydantic models, you can leverage their built-in serialization capabilities:
+
+```python
+from pydantic import BaseModel
+from .._utils.model_base import TYPE_HANDLER_REGISTRY
+
+@TYPE_HANDLER_REGISTRY.register_serializer(lambda obj: isinstance(obj, BaseModel))
+def serialize_pydantic_model(obj: BaseModel) -> dict:
+    """Serialize any Pydantic model using model_dump."""
+    return obj.model_dump()
+
+@TYPE_HANDLER_REGISTRY.register_deserializer(lambda t: issubclass(t, BaseModel))
+def deserialize_pydantic_model(cls: Type[BaseModel], data: dict) -> BaseModel:
+    """Deserialize to any Pydantic model using model_validate."""
+    return cls.model_validate(data)
+```
 
 [cae_doc]: https://learn.microsoft.com/azure/active-directory/conditional-access/concept-continuous-access-evaluation
 [custom_creds_sample]: https://github.com/Azure/azure-sdk-for-python/blob/fc95f8d3d84d076ffea158116ca1bf6912689c70/sdk/identity/azure-identity/samples/custom_credentials.py
