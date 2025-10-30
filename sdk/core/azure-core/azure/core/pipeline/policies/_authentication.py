@@ -5,6 +5,7 @@
 # -------------------------------------------------------------------------
 import time
 import base64
+import random
 from typing import TYPE_CHECKING, Optional, TypeVar, MutableMapping, Any, Union, cast
 
 from azure.core.credentials import (
@@ -36,6 +37,9 @@ if TYPE_CHECKING:
 HTTPResponseType = TypeVar("HTTPResponseType", HttpResponse, LegacyHttpResponse)
 HTTPRequestType = TypeVar("HTTPRequestType", HttpRequest, LegacyHttpRequest)
 
+DEFAULT_REFRESH_WINDOW_SECONDS = 300  # 5 minutes
+MAX_REFRESH_JITTER_SECONDS = 60       # 1 minute
+
 
 # pylint:disable=too-few-public-methods
 class _BearerTokenCredentialPolicyBase:
@@ -54,6 +58,7 @@ class _BearerTokenCredentialPolicyBase:
         self._credential = credential
         self._token: Optional[Union["AccessToken", "AccessTokenInfo"]] = None
         self._enable_cae: bool = kwargs.get("enable_cae", True)
+        self._refresh_jitter = 0
 
     @staticmethod
     def _enforce_https(request: PipelineRequest[HTTPRequestType]) -> None:
@@ -82,9 +87,20 @@ class _BearerTokenCredentialPolicyBase:
 
     @property
     def _need_new_token(self) -> bool:
+        if not self._token:
+            return True
+
         now = time.time()
         refresh_on = getattr(self._token, "refresh_on", None)
-        return not self._token or (refresh_on and refresh_on <= now) or self._token.expires_on - now < 300
+
+        if refresh_on:
+            # Apply jitter but ensure the effective refresh time does not exceed the token's expiry.
+            # This is to handle cases where the token's refresh_on is very close to its expires_on (not typical).
+            effective_refresh_time = min(refresh_on + self._refresh_jitter, self._token.expires_on)
+            return effective_refresh_time <= now
+
+        time_until_expiry = self._token.expires_on - now
+        return time_until_expiry < (DEFAULT_REFRESH_WINDOW_SECONDS - self._refresh_jitter)
 
     def _get_token(self, *scopes: str, **kwargs: Any) -> Union["AccessToken", "AccessTokenInfo"]:
         if self._enable_cae:
@@ -108,6 +124,7 @@ class _BearerTokenCredentialPolicyBase:
         :param str scopes: The type of access needed.
         """
         self._token = self._get_token(*scopes, **kwargs)
+        self._refresh_jitter = random.randint(0, MAX_REFRESH_JITTER_SECONDS)
 
 
 class BearerTokenCredentialPolicy(_BearerTokenCredentialPolicyBase, HTTPPolicy[HTTPRequestType, HTTPResponseType]):

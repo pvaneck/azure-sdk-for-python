@@ -4,6 +4,7 @@
 # license information.
 # -------------------------------------------------------------------------
 import time
+import random
 import base64
 from typing import Any, Awaitable, Optional, cast, TypeVar, Union
 
@@ -18,6 +19,8 @@ from azure.core.pipeline import PipelineRequest, PipelineResponse
 from azure.core.pipeline.policies import AsyncHTTPPolicy
 from azure.core.pipeline.policies._authentication import (
     _BearerTokenCredentialPolicyBase,
+    DEFAULT_REFRESH_WINDOW_SECONDS,
+    MAX_REFRESH_JITTER_SECONDS,
 )
 from azure.core.pipeline.transport import (
     AsyncHttpResponse as LegacyAsyncHttpResponse,
@@ -50,6 +53,7 @@ class AsyncBearerTokenCredentialPolicy(AsyncHTTPPolicy[HTTPRequestType, AsyncHTT
         self._lock_instance = None
         self._token: Optional[Union["AccessToken", "AccessTokenInfo"]] = None
         self._enable_cae: bool = kwargs.get("enable_cae", True)
+        self._refresh_jitter = 0
 
     @property
     def _lock(self):
@@ -192,9 +196,20 @@ class AsyncBearerTokenCredentialPolicy(AsyncHTTPPolicy[HTTPRequestType, AsyncHTT
         return
 
     def _need_new_token(self) -> bool:
+        if not self._token:
+            return True
+
         now = time.time()
         refresh_on = getattr(self._token, "refresh_on", None)
-        return not self._token or (refresh_on and refresh_on <= now) or self._token.expires_on - now < 300
+
+        if refresh_on:
+            # Apply jitter but ensure the effective refresh time does not exceed the token's expiry.
+            # This is to handle cases where the token's refresh_on is very close to its expires_on (not typical).
+            effective_refresh_time = min(refresh_on + self._refresh_jitter, self._token.expires_on)
+            return effective_refresh_time <= now
+
+        time_until_expiry = self._token.expires_on - now
+        return time_until_expiry < (DEFAULT_REFRESH_WINDOW_SECONDS - self._refresh_jitter)
 
     async def _get_token(self, *scopes: str, **kwargs: Any) -> Union["AccessToken", "AccessTokenInfo"]:
         if self._enable_cae:
@@ -226,3 +241,4 @@ class AsyncBearerTokenCredentialPolicy(AsyncHTTPPolicy[HTTPRequestType, AsyncHTT
         :param str scopes: The type of access needed.
         """
         self._token = await self._get_token(*scopes, **kwargs)
+        self._refresh_jitter = random.randint(0, MAX_REFRESH_JITTER_SECONDS)
