@@ -6,6 +6,8 @@
 import time
 import base64
 import random
+import threading
+from concurrent.futures import ThreadPoolExecutor, Future
 from typing import TYPE_CHECKING, Optional, TypeVar, MutableMapping, Any, Union, cast
 
 from azure.core.credentials import (
@@ -37,8 +39,9 @@ if TYPE_CHECKING:
 HTTPResponseType = TypeVar("HTTPResponseType", HttpResponse, LegacyHttpResponse)
 HTTPRequestType = TypeVar("HTTPRequestType", HttpRequest, LegacyHttpRequest)
 
-DEFAULT_REFRESH_WINDOW_SECONDS = 300  # 5 minutes
-MAX_REFRESH_JITTER_SECONDS = 60       # 1 minute
+DEFAULT_REFRESH_WINDOW_SECONDS = 300    # 5 minutes
+MAX_REFRESH_JITTER_SECONDS = 60         # 1 minute
+BACKGROUND_REFRESH_WINDOW_SECONDS = 900 # 15 minutes
 
 
 # pylint:disable=too-few-public-methods
@@ -59,6 +62,14 @@ class _BearerTokenCredentialPolicyBase:
         self._token: Optional[Union["AccessToken", "AccessTokenInfo"]] = None
         self._enable_cae: bool = kwargs.get("enable_cae", True)
         self._refresh_jitter = 0
+        self._last_background_refresh = 0.0
+        self._background_refresh_future: Optional[Future] = None
+        self._executor: Optional[ThreadPoolExecutor] = None
+
+    def __del__(self):
+        """Clean up the thread pool executor when the policy is destroyed."""
+        if self._executor:
+            self._executor.shutdown(wait=False)
 
     @staticmethod
     def _enforce_https(request: PipelineRequest[HTTPRequestType]) -> None:
@@ -102,6 +113,44 @@ class _BearerTokenCredentialPolicyBase:
         time_until_expiry = self._token.expires_on - now
         return time_until_expiry < (DEFAULT_REFRESH_WINDOW_SECONDS - self._refresh_jitter)
 
+    def _try_background_refresh(self) -> bool:
+        """Check if we should do a background refresh, and do initiate it if so."""
+        if not self._token:
+            return False
+
+        now = time.time()
+        # Only do a background refresh if there is still significant time left on the token.
+        if self._token.expires_on - now > BACKGROUND_REFRESH_WINDOW_SECONDS:
+            return False
+
+        # Check if background refresh task is already running
+        if self._background_refresh_future and not self._background_refresh_future.done():
+            # If the background refresh task has been running for more than 30 seconds, we consider it stale
+            # and allow a new one to start.
+            if now - self._last_background_refresh > 30:
+                self._background_refresh_future.cancel()
+                self._background_refresh_future = None
+            else:
+                return False
+
+        # Clear completed background refresh task
+        if self._background_refresh_future and self._background_refresh_future.done():
+            self._background_refresh_future = None
+
+        def background_refresh():
+            try:
+                self._request_token(*self._scopes)
+            except Exception:  # pylint: disable=broad-except
+                pass
+
+        # Start a new background refresh task
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="TokenRefresh")
+
+        self._background_refresh_future = self._executor.submit(background_refresh)
+        self._last_background_refresh = now
+        return True
+
     def _get_token(self, *scopes: str, **kwargs: Any) -> Union["AccessToken", "AccessTokenInfo"]:
         if self._enable_cae:
             kwargs.setdefault("enable_cae", self._enable_cae)
@@ -125,7 +174,7 @@ class _BearerTokenCredentialPolicyBase:
         """
         self._token = self._get_token(*scopes, **kwargs)
         self._refresh_jitter = random.randint(0, MAX_REFRESH_JITTER_SECONDS)
-
+        self._last_background_refresh = time.time()
 
 class BearerTokenCredentialPolicy(_BearerTokenCredentialPolicyBase, HTTPPolicy[HTTPRequestType, HTTPResponseType]):
     """Adds a bearer token Authorization header to requests.
@@ -148,7 +197,9 @@ class BearerTokenCredentialPolicy(_BearerTokenCredentialPolicyBase, HTTPPolicy[H
         self._enforce_https(request)
 
         if self._token is None or self._need_new_token:
-            self._request_token(*self._scopes)
+            # If we can do a background refresh, start it and use the existing token
+            if not self._try_background_refresh():
+                self._request_token(*self._scopes)
         bearer_token = cast(Union["AccessToken", "AccessTokenInfo"], self._token).token
         self._update_headers(request.http_request.headers, bearer_token)
 
