@@ -5,10 +5,12 @@
 # -------------------------------------------------------------------------
 import asyncio
 import base64
+import pickle
 import sys
 import time
 from unittest.mock import Mock, patch, AsyncMock, create_autospec
 from requests import Response
+
 
 from azure.core.credentials import AccessToken, AccessTokenInfo
 from azure.core.credentials_async import AsyncTokenCredential, AsyncSupportsTokenInfo
@@ -20,11 +22,51 @@ from azure.core.pipeline.policies import (
     AsyncRedirectPolicy,
     SensitiveHeaderCleanupPolicy,
 )
+from azure.core.pipeline.policies._authentication import BACKGROUND_REFRESH_WINDOW_SECONDS
 from azure.core.pipeline.transport import AsyncHttpTransport, HttpRequest
 import pytest
 import trio
 
 from utils import HTTP_REQUESTS
+
+
+# Picklable credential class for testing
+class PicklableCredential(AsyncTokenCredential):
+    def __init__(self):
+        self.token = AccessToken("test_token", int(time.time()) + 3600)
+
+    async def get_token(self, *scopes, **kwargs):
+        return self.token
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type=None, exc_val=None, exc_tb=None):
+        pass
+
+
+# Slow refresh credential for testing background task scenarios
+class SlowRefreshCredential(AsyncTokenCredential):
+    def __init__(self):
+        self.call_count = 0
+        # Create a token that will trigger background refresh
+        self.token = AccessToken("initial_token", int(time.time()) + 3600)
+
+    async def get_token(self, *scopes, **kwargs):
+        self.call_count += 1
+        # First call returns initial token, subsequent calls simulate slow refresh
+        if self.call_count == 1:
+            return self.token
+        else:
+            # Simulate a slow token refresh by sleeping
+            await asyncio.sleep(0.1)
+            return AccessToken("refreshed_token", int(time.time()) + 3600)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type=None, exc_val=None, exc_tb=None):
+        pass
 
 
 @pytest.mark.asyncio
@@ -244,7 +286,7 @@ async def test_bearer_policy_access_token_info_caching(http_request):
     await pipeline.run(http_request("GET", "https://spam.eggs"))
     assert credential.get_token_info.call_count == 2  # token is expired -> policy should call get_token_info again
 
-    refreshable_token = AccessTokenInfo("token", int(time.time() + 3600), refresh_on=int(time.time() - 1))
+    refreshable_token = AccessTokenInfo("token", int(time.time() + 100), refresh_on=int(time.time() - 1))
     credential.get_token_info.reset_mock()
     credential.get_token_info.return_value = refreshable_token
     pipeline = AsyncPipeline(transport=AsyncMock(), policies=[AsyncBearerTokenCredentialPolicy(credential, "scope")])
@@ -735,3 +777,572 @@ async def test_async_bearer_policy_reads_streamed_response_on_challenge_exceptio
     # Verify the exception chaining
     assert exc_info.value.__cause__ is not None
     assert isinstance(exc_info.value.__cause__, HttpResponseError)
+
+
+@pytest.mark.asyncio
+async def test_bearer_policy_is_picklable():
+    """Test that AsyncBearerTokenCredentialPolicy can be pickled and unpickled"""
+
+    # Create a credential instance
+    credential = PicklableCredential()
+
+    # Create the policy instance
+    policy = AsyncBearerTokenCredentialPolicy(credential, "https://example.com/.default")
+
+    # Test basic pickling
+    serialized = pickle.dumps(policy)
+    deserialized_policy = pickle.loads(serialized)  # nosec
+
+    # Verify the policy was deserialized correctly
+    assert isinstance(deserialized_policy, AsyncBearerTokenCredentialPolicy)
+    assert deserialized_policy._scopes == policy._scopes
+    assert deserialized_policy._enable_cae == policy._enable_cae
+
+    # Test pickling with state
+    # Set a token on the original policy to verify state is preserved
+    test_token = AccessToken("preserved_token", int(time.time()) + 3600)
+    policy._token = test_token
+
+    # Pickle and unpickle again
+    serialized_with_token = pickle.dumps(policy)
+    deserialized_with_token = pickle.loads(serialized_with_token)  # nosec
+
+    # Verify the token state was preserved
+    assert deserialized_with_token._token is not None
+    assert deserialized_with_token._token.token == "preserved_token"
+    assert deserialized_with_token._token.expires_on == test_token.expires_on
+
+    # Test that the deserialized policy can still function
+    # (Note: We can't easily test the async functionality due to asyncio loop issues in pickle,
+    # but we can verify the basic structure is intact)
+    assert callable(deserialized_with_token._credential.get_token)
+    assert hasattr(deserialized_with_token, "_lock_instance")
+    assert hasattr(deserialized_with_token, "_background_refresh_task")
+
+
+@pytest.mark.asyncio
+async def test_bearer_policy_picklable_with_background_task():
+    """Test that AsyncBearerTokenCredentialPolicy can be pickled even with an active background refresh task"""
+
+    credential = SlowRefreshCredential()
+    policy = AsyncBearerTokenCredentialPolicy(credential, "https://example.com/.default")
+
+    expires_soon = int(time.time()) + BACKGROUND_REFRESH_WINDOW_SECONDS + 100
+    policy._token = AccessToken("expiring_token", expires_soon)
+
+    # Trigger background refresh by calling _try_background_refresh
+    background_started = policy._try_background_refresh()
+    assert background_started, "Background refresh should have started"
+    assert policy._background_refresh_task is not None, "Background task should be created"
+    assert not policy._background_refresh_task.done(), "Background task should still be running"
+
+    # Store the original task for verification
+    original_task = policy._background_refresh_task
+
+    # Now test pickling with active background task
+    # With __getstate__ customization, this should now succeed
+    serialized = pickle.dumps(policy)
+
+    # Give the cancellation a moment to process
+    await asyncio.sleep(0.01)
+
+    # Verify the original task was cancelled during pickling
+    assert original_task.cancelled(), "Original background task should have been cancelled during pickling"
+
+    # Test unpickling
+    deserialized_policy = pickle.loads(serialized)  # nosec
+
+    # Verify the policy structure is intact
+    assert isinstance(deserialized_policy, AsyncBearerTokenCredentialPolicy)
+    assert deserialized_policy._scopes == policy._scopes
+    assert deserialized_policy._enable_cae == policy._enable_cae
+
+    # The token should be preserved
+    assert deserialized_policy._token is not None
+    assert deserialized_policy._token.token == "expiring_token"
+
+    # The background task should be None after unpickling
+    assert deserialized_policy._background_refresh_task is None
+
+    # The lock instance should also be None after unpickling
+    assert deserialized_policy._lock_instance is None
+
+    # Verify that the deserialized policy can create new background tasks when needed
+    # Set a token that's close to expiry again
+    deserialized_policy._token = AccessToken("another_expiring_token", expires_soon)
+
+    # This should create a new background task
+    new_background_started = deserialized_policy._try_background_refresh()
+    assert new_background_started, "Deserialized policy should be able to start new background refresh"
+    assert deserialized_policy._background_refresh_task is not None, "New background task should be created"
+
+    # Clean up - cancel the new background task
+    if deserialized_policy._background_refresh_task and not deserialized_policy._background_refresh_task.done():
+        task_to_cancel = deserialized_policy._background_refresh_task
+        task_to_cancel.cancel()
+        try:
+            await asyncio.shield(task_to_cancel)
+        except (asyncio.CancelledError, asyncio.InvalidStateError):
+            pass
+
+
+# Background refresh credential that tracks calls and allows control
+class BackgroundRefreshTestCredential(AsyncTokenCredential):
+    def __init__(self):
+        self.get_token_call_count = 0
+        self.tokens_to_return = []
+        self.get_token_delay = 0.0
+        self.should_fail = False
+        self.fail_once = False
+        self._lock = asyncio.Lock()
+        self.last_exception = None
+
+    def set_tokens(self, tokens):
+        """Set the sequence of tokens to return on get_token calls."""
+        self.tokens_to_return = tokens
+
+    def set_delay(self, delay):
+        """Set delay for get_token calls to simulate slow refresh."""
+        self.get_token_delay = delay
+
+    def set_failure(self, should_fail=True, fail_once=False):
+        """Configure credential to fail on get_token calls."""
+        self.should_fail = should_fail
+        self.fail_once = fail_once
+
+    async def get_token(self, *scopes, **kwargs):
+        async with self._lock:
+            self.get_token_call_count += 1
+
+            try:
+                if self.should_fail:
+                    if self.fail_once:
+                        self.should_fail = False
+                    raise ClientAuthenticationError("Simulated credential failure")
+
+                if self.get_token_delay > 0:
+                    await asyncio.sleep(self.get_token_delay)
+
+                if self.tokens_to_return:
+                    # Return the latest (refreshed) token from the second element onward
+                    if len(self.tokens_to_return) > 1:
+                        token = self.tokens_to_return[1]  # Always return the refreshed token
+                    else:
+                        token = self.tokens_to_return[0]
+                    return token
+
+                # Default token
+                default_token = AccessToken(f"token_{self.get_token_call_count}", int(time.time()) + 3600)
+                return default_token
+            except Exception as e:
+                self.last_exception = e
+                raise
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type=None, exc_val=None, exc_tb=None):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_background_refresh_triggered_with_sufficient_time():
+    """Test that background refresh is triggered when token has sufficient time left until expiration."""
+    credential = BackgroundRefreshTestCredential()
+    policy = AsyncBearerTokenCredentialPolicy(credential, "https://example.com/.default")
+
+    # Create a token that will trigger background refresh (expires in > 15 minutes)
+    expires_in_background_window = int(time.time()) + BACKGROUND_REFRESH_WINDOW_SECONDS + 600  # 25 minutes
+    initial_token = AccessToken("initial_token", expires_in_background_window)
+    refreshed_token = AccessToken("refreshed_token", int(time.time()) + 3600)
+
+    credential.set_tokens([initial_token, refreshed_token])
+
+    # Set initial token
+    policy._token = initial_token
+
+    # Trigger background refresh
+    background_started = policy._try_background_refresh()
+
+    assert background_started, "Background refresh should have started with sufficient time left"
+    assert policy._background_refresh_task is not None, "Background task should be created"
+    assert credential.get_token_call_count == 0, "Token should not be fetched yet"
+
+    # Wait for background task to complete
+    if policy._background_refresh_task:
+        await policy._background_refresh_task
+        # Give a small extra time for any final async operations
+        await asyncio.sleep(0.01)
+
+    # Verify token was refreshed in background
+    assert credential.get_token_call_count == 1, "Background refresh should have called get_token"
+    assert policy._token.token == "refreshed_token", "Token should be updated to refreshed token"
+
+
+@pytest.mark.asyncio
+async def test_background_refresh_not_triggered_when_too_close_to_expiry():
+    """Test that background refresh is NOT triggered when token is too close to expiration."""
+    credential = BackgroundRefreshTestCredential()
+    policy = AsyncBearerTokenCredentialPolicy(credential, "https://example.com/.default")
+
+    # Create a token that's too close to expiry for background refresh (< 15 minutes)
+    expires_soon = int(time.time()) + BACKGROUND_REFRESH_WINDOW_SECONDS - 100  # 13.3 minutes
+    token_close_to_expiry = AccessToken("expiring_token", expires_soon)
+
+    policy._token = token_close_to_expiry
+
+    # Attempt to trigger background refresh
+    background_started = policy._try_background_refresh()
+
+    assert not background_started, "Background refresh should NOT start when token is too close to expiry"
+    assert policy._background_refresh_task is None, "No background task should be created"
+    assert credential.get_token_call_count == 0, "No token request should be made"
+
+
+@pytest.mark.asyncio
+async def test_background_refresh_uses_existing_token_during_refresh():
+    """Test that existing token is used while background refresh is in progress."""
+    credential = BackgroundRefreshTestCredential()
+    policy = AsyncBearerTokenCredentialPolicy(credential, "https://example.com/.default")
+
+    # Create a slow refreshing credential to test concurrent access
+    credential.set_delay(0.2)  # 200ms delay
+
+    expires_in_background_window = int(time.time()) + BACKGROUND_REFRESH_WINDOW_SECONDS + 600
+    initial_token = AccessToken("initial_token", expires_in_background_window)
+    refreshed_token = AccessToken("refreshed_token", int(time.time()) + 3600)
+
+    credential.set_tokens([initial_token, refreshed_token])
+    policy._token = initial_token
+
+    # Mock transport to verify Authorization header
+    auth_headers = []
+
+    async def verify_auth_header(request):
+        auth_headers.append(request.http_request.headers.get("Authorization"))
+        response = Mock()
+        response.status_code = 200
+        return response
+
+    # Create pipeline
+    pipeline = AsyncPipeline(transport=Mock(), policies=[policy, Mock(send=verify_auth_header)])
+
+    # Start background refresh
+    background_started = policy._try_background_refresh()
+    assert background_started, "Background refresh should start"
+
+    # Make multiple requests while background refresh is running
+    await pipeline.run(HttpRequest("GET", "https://example.com/resource1"))
+    await pipeline.run(HttpRequest("GET", "https://example.com/resource2"))
+
+    # Wait for background refresh to complete
+    if policy._background_refresh_task:
+        await policy._background_refresh_task
+
+    # Verify that initial token was used for both requests
+    assert len(auth_headers) == 2, "Should have captured 2 auth headers"
+    assert all(
+        header == "Bearer initial_token" for header in auth_headers
+    ), "Should use existing token during background refresh"
+
+    # Verify token was eventually refreshed
+    assert policy._token.token == "refreshed_token", "Token should be refreshed after background task completes"
+
+
+@pytest.mark.asyncio
+async def test_background_refresh_handles_credential_failure_gracefully():
+    """Test that background refresh failures don't affect existing token usage."""
+    credential = BackgroundRefreshTestCredential()
+    policy = AsyncBearerTokenCredentialPolicy(credential, "https://example.com/.default")
+
+    # Configure credential to fail during refresh
+    credential.set_failure(should_fail=True)
+
+    expires_in_background_window = int(time.time()) + BACKGROUND_REFRESH_WINDOW_SECONDS + 600
+    initial_token = AccessToken("initial_token", expires_in_background_window)
+    policy._token = initial_token
+
+    # Trigger background refresh
+    background_started = policy._try_background_refresh()
+    assert background_started, "Background refresh should start even if it will fail"
+
+    # Wait for background task to complete (should handle exception)
+    if policy._background_refresh_task:
+        await policy._background_refresh_task
+
+    # Verify that existing token is still available and usable
+    assert policy._token.token == "initial_token", "Original token should be preserved after background refresh failure"
+
+    # Mock transport to verify the token is still usable
+    auth_header = None
+
+    async def capture_auth_header(request):
+        nonlocal auth_header
+        auth_header = request.http_request.headers.get("Authorization")
+        response = Mock()
+        response.status_code = 200
+        return response
+
+    pipeline = AsyncPipeline(transport=Mock(), policies=[policy, Mock(send=capture_auth_header)])
+
+    # Make a request - should use the original token
+    await pipeline.run(HttpRequest("GET", "https://example.com/resource"))
+
+    assert auth_header == "Bearer initial_token", "Should still use original token after failed background refresh"
+    assert credential.get_token_call_count == 1, "get_token should have been called once (and failed)"
+
+
+@pytest.mark.asyncio
+async def test_background_refresh_prevents_duplicate_tasks():
+    """Test that multiple background refresh attempts don't create duplicate tasks."""
+    credential = BackgroundRefreshTestCredential()
+    policy = AsyncBearerTokenCredentialPolicy(credential, "https://example.com/.default")
+
+    # Create slow refreshing credential
+    credential.set_delay(0.3)  # 300ms delay
+
+    expires_in_background_window = int(time.time()) + BACKGROUND_REFRESH_WINDOW_SECONDS + 600
+    initial_token = AccessToken("initial_token", expires_in_background_window)
+    refreshed_token = AccessToken("refreshed_token", int(time.time()) + 3600)
+
+    credential.set_tokens([initial_token, refreshed_token])
+    policy._token = initial_token
+
+    # First background refresh attempt
+    first_started = policy._try_background_refresh()
+    assert first_started, "First background refresh should start"
+    first_task = policy._background_refresh_task
+    assert first_task is not None, "First task should be created"
+
+    # Immediate second attempt should not create new task
+    second_started = policy._try_background_refresh()
+    assert not second_started, "Second background refresh should not start while first is running"
+    assert policy._background_refresh_task is first_task, "Should reuse the same task"
+
+    # Wait for task to complete
+    await first_task
+
+    # Verify only one token request was made
+    assert credential.get_token_call_count == 1, "Should have made exactly one token request"
+
+
+@pytest.mark.asyncio
+async def test_background_refresh_stale_task_timeout():
+    """Test that stale background refresh tasks are cancelled and replaced after 30 seconds."""
+    credential = BackgroundRefreshTestCredential()
+    policy = AsyncBearerTokenCredentialPolicy(credential, "https://example.com/.default")
+
+    # Set a slow credential to prevent the first task from completing immediately
+    credential.set_delay(0.5)
+
+    expires_in_background_window = int(time.time()) + BACKGROUND_REFRESH_WINDOW_SECONDS + 600
+    initial_token = AccessToken("initial_token", expires_in_background_window)
+    policy._token = initial_token
+
+    # Start first background refresh
+    first_started = policy._try_background_refresh()
+    assert first_started, "First background refresh should start"
+    first_task = policy._background_refresh_task
+
+    # Verify task is running
+    assert not first_task.done(), "First task should still be running"
+
+    # Simulate that the first task has been running for more than 30 seconds
+    policy._last_background_refresh = time.time() - 35  # 35 seconds ago
+
+    # Second attempt should cancel the stale task and start a new one
+    second_started = policy._try_background_refresh()
+    assert second_started, "Second background refresh should start after stale timeout"
+    second_task = policy._background_refresh_task
+
+    assert second_task is not first_task, "Should create a new task"
+    # Give a small moment for cancellation to take effect
+    await asyncio.sleep(0.01)
+    assert first_task.cancelled(), "First task should be cancelled"
+
+    # Clean up
+    if second_task and not second_task.done():
+        second_task.cancel()
+        try:
+            await second_task
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_background_refresh_no_token_available():
+    """Test that background refresh is not triggered when no token is available."""
+    credential = BackgroundRefreshTestCredential()
+    policy = AsyncBearerTokenCredentialPolicy(credential, "https://example.com/.default")
+
+    # No token set
+    assert policy._token is None
+
+    # Attempt background refresh
+    background_started = policy._try_background_refresh()
+
+    assert not background_started, "Background refresh should not start without a token"
+    assert policy._background_refresh_task is None, "No background task should be created"
+    assert credential.get_token_call_count == 0, "No token request should be made"
+
+
+@pytest.mark.asyncio
+async def test_background_refresh_completed_task_cleanup():
+    """Test that completed background refresh tasks are properly cleaned up."""
+    credential = BackgroundRefreshTestCredential()
+    policy = AsyncBearerTokenCredentialPolicy(credential, "https://example.com/.default")
+
+    expires_in_background_window = int(time.time()) + BACKGROUND_REFRESH_WINDOW_SECONDS + 600
+    initial_token = AccessToken("initial_token", expires_in_background_window)
+    refreshed_token = AccessToken("refreshed_token", int(time.time()) + 3600)
+
+    credential.set_tokens([initial_token, refreshed_token])
+    policy._token = initial_token
+
+    # Start and complete background refresh
+    first_started = policy._try_background_refresh()
+    assert first_started, "Background refresh should start"
+    first_task = policy._background_refresh_task
+
+    # Wait for completion
+    if first_task:
+        await first_task
+        assert first_task.done(), "Task should be completed"
+
+    # Next attempt should clean up completed task and start fresh
+    second_started = policy._try_background_refresh()
+    assert second_started, "Second background refresh should start"
+    second_task = policy._background_refresh_task
+
+    assert second_task is not first_task, "Should create a new task after cleanup"
+
+    # Clean up
+    if second_task and not second_task.done():
+        second_task.cancel()
+        try:
+            await second_task
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("http_request", HTTP_REQUESTS)
+async def test_background_refresh_integration_with_on_request(http_request):
+    """Test that background refresh integrates properly with the on_request flow when token needs refresh."""
+
+    # Create a custom token class that can have refresh_on attribute
+    class RefreshOnToken:
+        def __init__(self, token, expires_on, refresh_on):
+            self.token = token
+            self.expires_on = expires_on
+            self.refresh_on = refresh_on
+
+    credential = BackgroundRefreshTestCredential()
+    policy = AsyncBearerTokenCredentialPolicy(credential, "https://example.com/.default")
+
+    # Create a token that needs refresh (refresh_on has passed) but has significant time left
+    now = time.time()
+    expires_in_background_window = int(now + BACKGROUND_REFRESH_WINDOW_SECONDS + 600)
+    refresh_on_passed = int(now - 100)  # refresh_on time has already passed
+
+    # Use our custom token class with refresh_on in the past
+    initial_token = RefreshOnToken("initial_token", expires_in_background_window, refresh_on_passed)
+    refreshed_token = AccessToken("refreshed_token", int(now + 3600))
+
+    credential.set_tokens([refreshed_token])
+
+    # Set initial token that needs refresh
+    policy._token = initial_token  # type: ignore
+
+    # Create request
+    request = PipelineRequest(http_request("GET", "https://example.com"), PipelineContext(None))
+
+    # Call on_request - should trigger background refresh because refresh_on has passed
+    # but token still has significant time left
+    await policy.on_request(request)
+
+    # Verify Authorization header uses existing token (background refresh doesn't block)
+    assert request.http_request.headers["Authorization"] == "Bearer initial_token"
+
+    # Verify background refresh was started
+    assert policy._background_refresh_task is not None, "Background refresh should be started"
+
+    # Wait for background refresh to complete
+    await policy._background_refresh_task
+
+    # Verify token was refreshed
+    assert policy._token.token == "refreshed_token", "Token should be refreshed in background"  # type: ignore
+    assert credential.get_token_call_count == 1, "get_token should be called once for background refresh"
+
+
+@pytest.mark.asyncio
+async def test_background_refresh_with_refresh_on_token():
+    """Test background refresh behavior with tokens that have refresh_on attribute."""
+
+    # Create a custom token class that can have refresh_on attribute
+    class RefreshOnToken:
+        def __init__(self, token, expires_on, refresh_on):
+            self.token = token
+            self.expires_on = expires_on
+            self.refresh_on = refresh_on
+
+    credential = BackgroundRefreshTestCredential()
+    policy = AsyncBearerTokenCredentialPolicy(credential, "https://example.com/.default")
+
+    # Create token with refresh_on that has passed, but with significant time left
+    now = time.time()
+    expires_in_background_window = int(now + BACKGROUND_REFRESH_WINDOW_SECONDS + 600)
+    refresh_on_passed = int(now - 100)  # refresh_on time has already passed
+
+    # Use our custom token class
+    initial_token = RefreshOnToken("initial_token", expires_in_background_window, refresh_on_passed)
+    policy._token = initial_token  # type: ignore
+    credential.set_tokens([AccessToken("refreshed_token", expires_in_background_window + 100)])
+
+    # Create proper pipeline request
+    request = HttpRequest("GET", "https://example.com")
+    pipeline_request = PipelineRequest(request, PipelineContext(None))
+
+    # Call on_request - should trigger background refresh because refresh_on has passed
+    # and token still has significant time left (>15 minutes)
+    await policy.on_request(pipeline_request)
+
+    # Background refresh should have been started
+    assert policy._background_refresh_task is not None
+    assert not policy._background_refresh_task.done()
+
+    # Wait for background refresh to complete
+    await asyncio.sleep(0.1)
+
+    # Verify token was refreshed
+    assert policy._token.token == "refreshed_token"  # type: ignore
+    assert credential.get_token_call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_background_refresh_not_triggered_when_token_fresh():
+    """Test that background refresh is not triggered when token doesn't need refresh."""
+    credential = BackgroundRefreshTestCredential()
+    policy = AsyncBearerTokenCredentialPolicy(credential, "https://example.com/.default")
+
+    # Create token that does NOT need refresh (no refresh_on, expires far in future)
+    now = time.time()
+    expires_in_background_window = int(now + BACKGROUND_REFRESH_WINDOW_SECONDS + 600)
+
+    initial_token = AccessToken("initial_token", expires_in_background_window)
+    policy._token = initial_token
+    credential.set_tokens([AccessToken("refreshed_token", expires_in_background_window + 100)])
+
+    # Create proper pipeline request
+    request = HttpRequest("GET", "https://example.com")
+    pipeline_request = PipelineRequest(request, PipelineContext(None))
+
+    # Call on_request - should NOT trigger background refresh because token doesn't need refresh
+    await policy.on_request(pipeline_request)
+
+    # Background refresh should not have been started
+    assert policy._background_refresh_task is None
+    assert credential.get_token_call_count == 0
+
+    # Verify authorization header was set with original token
+    assert request.headers["Authorization"] == "Bearer initial_token"

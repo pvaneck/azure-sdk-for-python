@@ -5,6 +5,7 @@
 # -------------------------------------------------------------------------
 import time
 import base64
+import asyncio
 from typing import Any, Awaitable, Optional, cast, TypeVar, Union
 
 from azure.core.credentials import AccessToken, AccessTokenInfo, TokenRequestOptions
@@ -18,6 +19,7 @@ from azure.core.pipeline import PipelineRequest, PipelineResponse
 from azure.core.pipeline.policies import AsyncHTTPPolicy
 from azure.core.pipeline.policies._authentication import (
     _BearerTokenCredentialPolicyBase,
+    BACKGROUND_REFRESH_WINDOW_SECONDS,
 )
 from azure.core.pipeline.transport import (
     AsyncHttpResponse as LegacyAsyncHttpResponse,
@@ -50,6 +52,28 @@ class AsyncBearerTokenCredentialPolicy(AsyncHTTPPolicy[HTTPRequestType, AsyncHTT
         self._lock_instance = None
         self._token: Optional[Union["AccessToken", "AccessTokenInfo"]] = None
         self._enable_cae: bool = kwargs.get("enable_cae", False)
+        self._last_background_refresh = 0.0
+        self._background_refresh_task: Optional[asyncio.Task] = None
+
+    def __getstate__(self) -> dict:
+        state = self.__dict__.copy()
+
+        # Cancel and remove the background refresh task if it exists
+        if self._background_refresh_task and not self._background_refresh_task.done():
+            self._background_refresh_task.cancel()
+
+        # Remove the unpicklable background task and lock instance
+        state["_background_refresh_task"] = None
+        state["_lock_instance"] = None
+
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+
+        # Ensure these are properly initialized as None after unpickling
+        self._background_refresh_task = None
+        self._lock_instance = None
 
     @property
     def _lock(self):
@@ -67,10 +91,13 @@ class AsyncBearerTokenCredentialPolicy(AsyncHTTPPolicy[HTTPRequestType, AsyncHTT
         _BearerTokenCredentialPolicyBase._enforce_https(request)  # pylint:disable=protected-access
 
         if self._token is None or self._need_new_token():
-            async with self._lock:
-                # double check because another coroutine may have acquired a token while we waited to acquire the lock
-                if self._token is None or self._need_new_token():
-                    await self._request_token(*self._scopes)
+            # If eligible for a background refresh, start it and use the existing token
+            if not self._try_background_refresh():
+                async with self._lock:
+                    # double check because another coroutine may have acquired a token while we waited to
+                    # acquire the lock
+                    if self._token is None or self._need_new_token():
+                        await self._request_token(*self._scopes)
         bearer_token = cast(Union[AccessToken, AccessTokenInfo], self._token).token
         request.http_request.headers["Authorization"] = "Bearer " + bearer_token
 
@@ -195,6 +222,46 @@ class AsyncBearerTokenCredentialPolicy(AsyncHTTPPolicy[HTTPRequestType, AsyncHTT
         now = time.time()
         refresh_on = getattr(self._token, "refresh_on", None)
         return not self._token or (refresh_on and refresh_on <= now) or self._token.expires_on - now < 300
+
+    def _try_background_refresh(self) -> bool:
+        """Check if we should do a background refresh, and do initiate it if so.
+
+        :returns: Whether a background refresh was initiated.
+        :rtype: bool
+        """
+
+        if not self._token:
+            return False
+
+        now = time.time()
+        # Only do a background refresh if there is still significant time left on the token.
+        if self._token.expires_on - now < BACKGROUND_REFRESH_WINDOW_SECONDS:
+            return False
+
+        # Check if background refresh task is already running.
+        if self._background_refresh_task and not self._background_refresh_task.done():
+            # If the background refresh task has been running for more than 30 seconds, we consider it stale
+            # and allow a new one to start.
+            if now - self._last_background_refresh > 30:
+                self._background_refresh_task.cancel()
+                self._background_refresh_task = None
+            else:
+                return False
+
+        # Clear completed background refresh task
+        if self._background_refresh_task and self._background_refresh_task.done():
+            self._background_refresh_task = None
+
+        async def background_refresh():
+            try:
+                await self._request_token(*self._scopes)
+            except Exception:  # pylint: disable=broad-except
+                pass
+
+        # Start a new background refresh task
+        self._background_refresh_task = asyncio.create_task(background_refresh())
+        self._last_background_refresh = now
+        return True
 
     async def _get_token(self, *scopes: str, **kwargs: Any) -> Union["AccessToken", "AccessTokenInfo"]:
         if self._enable_cae:
