@@ -3,11 +3,15 @@
 # Licensed under the MIT License.
 # ------------------------------------
 import functools
-from unittest.mock import Mock, patch
+import threading
+from time import sleep as real_sleep
+from unittest.mock import Mock, patch, MagicMock
 
+from azure.core.pipeline.transport import HttpRequest
 from azure.core.exceptions import ClientAuthenticationError, ServiceRequestError
 from azure.identity._constants import EnvironmentVariables
 from azure.identity._internal import AadClient, AadClientCertificate
+from azure.identity._internal.utils import create_request_key
 
 import pytest
 from msal import TokenCache
@@ -351,3 +355,350 @@ def test_claims(method, args):
         assert post_mock.call_count == 2
         data, _ = post_mock.call_args
         assert data[0]["claims"] == cae_merged_claims
+
+
+def test_request_coalescing_single_request():
+    """Test that a single request proceeds normally without coalescing."""
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope = "scope"
+    secret = "client-secret"
+    access_token = "access-token"
+
+    def send(request, **_):
+        return mock_response(json_payload={"access_token": access_token, "expires_in": 42})
+
+    transport = Mock(send=Mock(wraps=send))
+    client = AadClient(tenant_id, client_id, transport=transport)
+
+    token = client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+
+    assert token.token == access_token
+    assert transport.send.call_count == 1
+
+
+def test_request_coalescing_identical_requests():
+    """Test that identical concurrent requests are coalesced into a single network call."""
+
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope = "scope"
+    secret = "client-secret"
+    access_token = "access-token"
+
+    def send(request, **_):
+        # Add a longer delay to ensure threads have time to coalesce
+        real_sleep(0.5)
+        return mock_response(json_payload={"access_token": access_token, "expires_in": 42})
+
+    transport = Mock(send=Mock(wraps=send))
+    client = AadClient(tenant_id, client_id, transport=transport)
+
+    # Results list to collect tokens from concurrent requests
+    results = []
+    exceptions = []
+
+    # Use a barrier to ensure all threads start at exactly the same time
+    barrier = threading.Barrier(5)
+
+    def make_request():
+        try:
+            # Wait for all threads to be ready
+            barrier.wait()
+            token = client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+            results.append(token)
+        except Exception as e:
+            exceptions.append(e)
+
+    # Create multiple threads making the same request concurrently
+    threads = []
+    for _ in range(5):
+        thread = threading.Thread(target=make_request)
+        threads.append(thread)
+
+    # Start all threads
+    for thread in threads:
+        thread.start()
+
+    # Wait for all threads to complete
+    for thread in threads:
+        thread.join()
+
+    # Verify no exceptions occurred
+    assert len(exceptions) == 0, f"Unexpected exceptions: {exceptions}"
+
+    # Verify all requests returned the same token
+    assert len(results) == 5
+    for token in results:
+        assert token.token == access_token
+
+    # All requests should have been coalesced into one
+    assert transport.send.call_count == 1
+
+
+def test_request_coalescing_different_requests():
+    """Test that different requests are not coalesced."""
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope1 = "scope1"
+    scope2 = "scope2"
+    secret = "client-secret"
+    access_token = "access-token"
+
+    def send(request, **_):
+        real_sleep(0.5)
+        return mock_response(json_payload={"access_token": access_token, "expires_in": 42})
+
+    transport = Mock(send=Mock(wraps=send))
+    client = AadClient(tenant_id, client_id, transport=transport)
+
+    results = []
+    exceptions = []
+
+    # Use one barrier to start all threads simultaneously
+    barrier = threading.Barrier(6)
+
+    def make_request(scope, group_name):
+        try:
+            barrier.wait()
+            token = client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+            results.append((group_name, token))
+        except Exception as e:
+            exceptions.append(e)
+
+    # Create threads making different requests
+    threads = []
+    for i in range(3):
+        thread = threading.Thread(target=make_request, args=(scope1, "scope1"))
+        threads.append(thread)
+    for i in range(3):
+        thread = threading.Thread(target=make_request, args=(scope2, "scope2"))
+        threads.append(thread)
+
+    # Start all threads
+    for thread in threads:
+        thread.start()
+
+    # Wait for all threads to complete
+    for thread in threads:
+        thread.join()
+
+    # Verify no exceptions occurred
+    assert len(exceptions) == 0, f"Unexpected exceptions: {exceptions}"
+
+    # Verify all requests returned tokens
+    assert len(results) == 6
+
+    # Verify two network calls were made (one per unique request)
+    assert transport.send.call_count == 2
+    # Verify we have both types of scopes in the results
+    scope1_results = [r for r in results if r[0] == "scope1"]
+    scope2_results = [r for r in results if r[0] == "scope2"]
+    assert len(scope1_results) == 3
+    assert len(scope2_results) == 3
+
+
+def test_request_coalescing_handles_exceptions():
+    """Test that exceptions in coalesced requests are properly propagated to all waiters."""
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope = "scope"
+    secret = "client-secret"
+
+    def send(request, **_):
+        real_sleep(0.5)
+        # Simulate a network error
+        raise ServiceRequestError("Network error")
+
+    transport = Mock(send=Mock(wraps=send))
+    client = AadClient(tenant_id, client_id, transport=transport, retry_total=0)
+
+    results = []
+    exceptions = []
+
+    barrier = threading.Barrier(3)
+
+    def make_request():
+        try:
+            barrier.wait()
+            token = client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+            results.append(token)
+        except Exception as e:
+            exceptions.append(e)
+
+    threads = []
+    for _ in range(3):
+        thread = threading.Thread(target=make_request)
+        threads.append(thread)
+
+    for thread in threads:
+        thread.start()
+
+    # Wait for all threads to complete
+    for thread in threads:
+        thread.join()
+
+    assert len(results) == 0
+    assert len(exceptions) == 3
+    for exception in exceptions:
+        assert isinstance(exception, ServiceRequestError)
+        assert "Network error" in str(exception)
+
+    assert transport.send.call_count == 1
+
+
+def test_request_coalescing_sequential_requests():
+    """Test that sequential requests (not concurrent) each make their own network call."""
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope = "scope"
+    secret = "client-secret"
+    access_token = "access-token"
+
+    def send(request, **_):
+        return mock_response(json_payload={"access_token": access_token, "expires_in": 42})
+
+    transport = Mock(send=Mock(wraps=send))
+    client = AadClient(tenant_id, client_id, transport=transport)
+
+    token1 = client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+    token2 = client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+    token3 = client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+
+    assert token1.token == access_token
+    assert token2.token == access_token
+    assert token3.token == access_token
+    assert transport.send.call_count == 3
+
+
+def test_request_coalescing_cleanup_on_close():
+    """Test that client close method works correctly."""
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope = "scope"
+    secret = "client-secret"
+
+    def send(request, **_):
+        # Simulate a long-running request
+        real_sleep(0.5)
+        return mock_response(json_payload={"access_token": "token", "expires_in": 42})
+
+    transport = MagicMock(send=Mock(wraps=send))
+    client = AadClient(tenant_id, client_id, transport=transport)
+
+    results = []
+    exceptions = []
+
+    def make_request():
+        try:
+            token = client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+            results.append(token)
+        except Exception as e:
+            exceptions.append(e)
+
+    # Start a request in a background thread
+    thread = threading.Thread(target=make_request)
+    thread.start()
+
+    # Give the request time to start
+    real_sleep(0.1)
+
+    # Close the client while request is in progress
+    client.close()
+
+    # Wait for thread to complete
+    thread.join()
+
+    # Verify that the client close method completed without error
+    # The request should still complete successfully
+    assert not client._pending_requests
+
+
+def test_request_coalescing_different_methods():
+    """Test that different credential methods with same parameters are not coalesced."""
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope = "scope"
+    secret = "client-secret"
+    refresh_token = "refresh-token"
+    access_token = "access-token"
+
+    def send(request, **_):
+        return mock_response(json_payload={"access_token": access_token, "expires_in": 42})
+
+    transport = Mock(send=Mock(wraps=send))
+    client = AadClient(tenant_id, client_id, transport=transport)
+
+    results = []
+    exceptions = []
+
+    barrier1 = threading.Barrier(1)
+    barrier2 = threading.Barrier(1)
+
+    def make_client_secret_request():
+        try:
+            barrier1.wait()
+            token = client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+            results.append(("client_secret", token))
+        except Exception as e:
+            exceptions.append(e)
+
+    def make_refresh_token_request():
+        try:
+            barrier2.wait()
+            token = client.obtain_token_by_refresh_token(scopes=(scope,), refresh_token=refresh_token)
+            results.append(("refresh_token", token))
+        except Exception as e:
+            exceptions.append(e)
+
+    # Create threads for different credential methods
+    threads = [
+        threading.Thread(target=make_client_secret_request),
+        threading.Thread(target=make_refresh_token_request),
+    ]
+
+    # Start all threads
+    for thread in threads:
+        thread.start()
+
+    # Wait for all threads to complete
+    for thread in threads:
+        thread.join()
+
+    # Verify no exceptions occurred
+    assert len(exceptions) == 0, f"Unexpected exceptions: {exceptions}"
+
+    # Verify both requests returned tokens
+    assert len(results) == 2
+
+    # Verify two separate network calls were made (different request bodies)
+    assert transport.send.call_count == 2
+
+
+def test_request_key_creation():
+    """Test that request keys are created correctly for deduplication."""
+    # Test requests with same URL and body produce same key
+    request1 = HttpRequest("POST", "https://example.com/token")
+    request1.body = {"grant_type": "client_credentials", "scope": "scope"}
+
+    request2 = HttpRequest("POST", "https://example.com/token")
+    request2.body = {"grant_type": "client_credentials", "scope": "scope"}
+
+    key1 = create_request_key(request1)
+    key2 = create_request_key(request2)
+
+    assert key1 == key2
+
+    # Test requests with different URLs produce different keys
+    request3 = HttpRequest("POST", "https://different.com/token")
+    request3.body = {"grant_type": "client_credentials", "scope": "scope"}
+
+    key3 = create_request_key(request3)
+    assert key1 != key3
+
+    # Test requests with different bodies produce different keys
+    request4 = HttpRequest("POST", "https://example.com/token")
+    request4.body = {"grant_type": "client_credentials", "scope": "different_scope"}
+
+    key4 = create_request_key(request4)
+    assert key1 != key4

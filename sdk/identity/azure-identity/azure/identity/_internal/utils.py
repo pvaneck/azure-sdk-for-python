@@ -5,6 +5,8 @@
 import base64
 import os
 import platform
+import hashlib
+import json
 import logging
 from contextvars import ContextVar
 from string import ascii_letters, digits
@@ -13,6 +15,7 @@ from typing import List, Optional
 from urllib.parse import urlparse
 
 from azure.core.exceptions import ClientAuthenticationError
+from azure.core.pipeline.transport import HttpRequest
 from .._constants import EnvironmentVariables, KnownAuthorities
 
 within_credential_chain = ContextVar("within_credential_chain", default=False)
@@ -229,3 +232,24 @@ def is_wsl() -> bool:
 def encode_base64(s: str) -> str:
     encoded = base64.b64encode(s.encode("utf-8"))
     return encoded.decode("utf-8")
+
+
+def create_request_key(request: HttpRequest) -> str:
+    """Create a unique key for request deduplication based on URL and body content.
+
+    :param request: The HTTP request to create a key for.
+    :type request: HttpRequest
+    :return: A unique string key representing the request.
+    :rtype: str
+    """
+    key_parts = [request.url]
+
+    if request.body:
+        if isinstance(request.body, dict):
+            body_str = json.dumps(request.body, sort_keys=True)
+        else:
+            body_str = str(request.body)
+        key_parts.append(body_str)
+
+    key_content = "|".join(key_parts)
+    return hashlib.sha256(key_content.encode("utf-8")).hexdigest()

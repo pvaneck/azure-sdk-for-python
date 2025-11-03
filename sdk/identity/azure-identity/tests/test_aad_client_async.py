@@ -3,12 +3,15 @@
 # Licensed under the MIT License.
 # ------------------------------------
 import functools
-from unittest.mock import Mock, patch
+import asyncio
+from unittest.mock import Mock, patch, MagicMock
 from urllib.parse import urlparse
 
 from azure.core.exceptions import ClientAuthenticationError, ServiceRequestError
+from azure.core.pipeline.transport import HttpRequest
 from azure.identity._constants import EnvironmentVariables
 from azure.identity._internal import AadClientCertificate
+from azure.identity._internal.utils import create_request_key
 from azure.identity.aio._internal.aad_client import AadClient
 from msal import TokenCache
 import pytest
@@ -324,3 +327,250 @@ async def test_multitenant_cache():
     assert client_d.get_cached_access_token([scope]) is None
     with pytest.raises(ClientAuthenticationError, match=message):
         client_d.get_cached_access_token([scope], tenant_id=tenant_a)
+
+
+async def test_request_coalescing_single_request():
+    """Test that a single async request proceeds normally without coalescing."""
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope = "scope"
+    secret = "client-secret"
+    access_token = "access-token"
+
+    async def send(request, **_):
+        return mock_response(json_payload={"access_token": access_token, "expires_in": 42})
+
+    transport = Mock(send=Mock(wraps=send))
+    client = AadClient(tenant_id, client_id, transport=transport)
+
+    token = await client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+
+    assert token.token == access_token
+    assert transport.send.call_count == 1
+
+
+async def test_request_coalescing_identical_requests():
+    """Test that identical concurrent async requests are coalesced into a single network call."""
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope = "scope"
+    secret = "client-secret"
+    access_token = "access-token"
+
+    async def send(request, **_):
+        # Add a delay to simulate network latency
+        await asyncio.sleep(0.2)
+        return mock_response(json_payload={"access_token": access_token, "expires_in": 42})
+
+    transport = Mock(send=Mock(wraps=send))
+    client = AadClient(tenant_id, client_id, transport=transport)
+
+    # Create multiple coroutines making the same request
+    async def make_request():
+        return await client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+
+    # Run 5 concurrent requests
+    results = await asyncio.gather(*[make_request() for _ in range(5)])
+
+    # Verify all requests returned the same token
+    assert len(results) == 5
+    for token in results:
+        assert token.token == access_token
+
+    # Verify only one network call was made despite 5 concurrent requests
+    assert transport.send.call_count == 1
+
+
+async def test_request_coalescing_different_requests():
+    """Test that different async requests are not coalesced."""
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope1 = "scope1"
+    scope2 = "scope2"
+    secret = "client-secret"
+    access_token = "access-token"
+
+    async def send(request, **_):
+        return mock_response(json_payload={"access_token": access_token, "expires_in": 42})
+
+    transport = Mock(send=Mock(wraps=send))
+    client = AadClient(tenant_id, client_id, transport=transport)
+
+    # Create coroutines making different requests
+    async def make_request1():
+        return await client.obtain_token_by_client_secret(scopes=(scope1,), secret=secret)
+
+    async def make_request2():
+        return await client.obtain_token_by_client_secret(scopes=(scope2,), secret=secret)
+
+    # Run concurrent requests with different scopes
+    tasks = [make_request1() for _ in range(3)] + [make_request2() for _ in range(3)]
+    results = await asyncio.gather(*tasks)
+
+    # Verify all requests returned tokens
+    assert len(results) == 6
+    for token in results:
+        assert token.token == access_token
+
+    assert transport.send.call_count == 2
+
+
+async def test_request_coalescing_sequential_requests():
+    """Test that sequential async requests (not concurrent) each make their own network call."""
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope = "scope"
+    secret = "client-secret"
+    access_token = "access-token"
+
+    async def send(request, **_):
+        return mock_response(json_payload={"access_token": access_token, "expires_in": 42})
+
+    transport = Mock(send=Mock(wraps=send))
+    client = AadClient(tenant_id, client_id, transport=transport)
+
+    # Make three sequential requests
+    token1 = await client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+    token2 = await client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+    token3 = await client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+
+    # Verify all requests returned tokens
+    assert token1.token == access_token
+    assert token2.token == access_token
+    assert token3.token == access_token
+
+    # Verify three separate network calls were made
+    assert transport.send.call_count == 3
+
+
+async def test_request_coalescing_cleanup_on_close():
+    """Test that async client close method works correctly."""
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope = "scope"
+    secret = "client-secret"
+
+    async def send(request, **_):
+        # Simulate a long-running request
+        await asyncio.sleep(0.5)
+        return mock_response(json_payload={"access_token": "token", "expires_in": 42})
+
+    transport = MagicMock(send=Mock(wraps=send))
+    client = AadClient(tenant_id, client_id, transport=transport)
+
+    # Start a request as a background task
+    async def make_request():
+        return await client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+
+    task = asyncio.create_task(make_request())
+
+    # Give the request time to start
+    await asyncio.sleep(0.1)
+
+    # Close the client while request is in progress
+    await client.close()
+
+    # Cancel the task since client is closed
+    task.cancel()
+
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass  # Expected
+
+    assert not client._pending_requests
+
+
+async def test_request_coalescing_different_methods():
+    """Test that different async credential methods with same parameters are not coalesced."""
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope = "scope"
+    secret = "client-secret"
+    refresh_token = "refresh-token"
+    access_token = "access-token"
+
+    async def send(request, **_):
+        return mock_response(json_payload={"access_token": access_token, "expires_in": 42})
+
+    transport = Mock(send=Mock(wraps=send))
+    client = AadClient(tenant_id, client_id, transport=transport)
+
+    # Create coroutines for different credential methods
+    async def make_client_secret_request():
+        return await client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+
+    async def make_refresh_token_request():
+        return await client.obtain_token_by_refresh_token(scopes=(scope,), refresh_token=refresh_token)
+
+    # Run both types of requests concurrently
+    results = await asyncio.gather(make_client_secret_request(), make_refresh_token_request())
+
+    # Verify both requests returned tokens
+    assert len(results) == 2
+    for token in results:
+        assert token.token == access_token
+
+    # Verify two separate network calls were made (different request bodies)
+    assert transport.send.call_count == 2
+
+
+async def test_async_request_key_creation():
+    """Test that async request keys are created correctly for deduplication."""
+
+    # Test requests with same URL and body produce same key
+    request1 = HttpRequest("POST", "https://example.com/token")
+    request1.body = {"grant_type": "client_credentials", "scope": "scope"}
+
+    request2 = HttpRequest("POST", "https://example.com/token")
+    request2.body = {"grant_type": "client_credentials", "scope": "scope"}
+
+    key1 = create_request_key(request1)
+    key2 = create_request_key(request2)
+
+    assert key1 == key2
+
+    # Test requests with different URLs produce different keys
+    request3 = HttpRequest("POST", "https://different.com/token")
+    request3.body = {"grant_type": "client_credentials", "scope": "scope"}
+
+    key3 = create_request_key(request3)
+    assert key1 != key3
+
+    # Test requests with different bodies produce different keys
+    request4 = HttpRequest("POST", "https://example.com/token")
+    request4.body = {"grant_type": "client_credentials", "scope": "different_scope"}
+
+    key4 = create_request_key(request4)
+    assert key1 != key4
+
+
+async def test_request_coalescing_with_context_manager():
+    """Test that request coalescing works with async context manager."""
+    tenant_id = "tenant-id"
+    client_id = "client-id"
+    scope = "scope"
+    secret = "client-secret"
+    access_token = "access-token"
+
+    async def send(request, **_):
+        await asyncio.sleep(0.1)
+        return mock_response(json_payload={"access_token": access_token, "expires_in": 42})
+
+    transport = MagicMock(send=Mock(wraps=send))
+
+    async with AadClient(tenant_id, client_id, transport=transport) as client:
+        # Create multiple coroutines making the same request
+        async def make_request():
+            return await client.obtain_token_by_client_secret(scopes=(scope,), secret=secret)
+
+        # Run 3 concurrent requests
+        results = await asyncio.gather(*[make_request() for _ in range(3)])
+
+        # Verify all requests returned the same token
+        assert len(results) == 3
+        for token in results:
+            assert token.token == access_token
+
+        # Verify only one network call was made
+        assert transport.send.call_count == 1

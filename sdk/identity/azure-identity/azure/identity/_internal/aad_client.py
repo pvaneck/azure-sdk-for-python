@@ -3,7 +3,9 @@
 # Licensed under the MIT License.
 # ------------------------------------
 import time
-from typing import Iterable, Union, Optional, Any
+import threading
+from concurrent.futures import Future
+from typing import Iterable, Union, Optional, Any, Dict
 
 from azure.core.credentials import AccessTokenInfo
 from azure.core.pipeline import Pipeline
@@ -11,9 +13,20 @@ from azure.core.pipeline.transport import HttpRequest
 from .aad_client_base import AadClientBase
 from .aadclient_certificate import AadClientCertificate
 from .pipeline import build_pipeline
+from .utils import create_request_key
 
 
-class AadClient(AadClientBase):
+class AadClient(AadClientBase):  # pylint:disable=client-accepts-api-version-keyword
+
+    def __init__(  # pylint:disable=missing-client-constructor-parameter-credential
+        self, *args: Any, **kwargs: Any
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        # Dictionary to store ongoing requests to prevent thundering herd
+        self._pending_requests: Dict[str, Future] = {}
+        # Lock to protect the pending requests dictionary
+        self._request_lock = threading.Lock()
+
     def __enter__(self) -> "AadClient":
         self._pipeline.__enter__()
         return self
@@ -22,6 +35,13 @@ class AadClient(AadClientBase):
         self._pipeline.__exit__(*args)
 
     def close(self) -> None:
+        if self._pending_requests:
+            with self._request_lock:
+                for future in self._pending_requests.values():
+                    if not future.done():
+                        future.cancel()
+                self._pending_requests.clear()
+
         self.__exit__()
 
     def obtain_token_by_authorization_code(
@@ -65,7 +85,7 @@ class AadClient(AadClientBase):
     def _build_pipeline(self, **kwargs: Any) -> Pipeline:
         return build_pipeline(**kwargs)
 
-    def _run_pipeline(self, request: HttpRequest, **kwargs: Any) -> AccessTokenInfo:
+    def _execute_pipeline_request(self, request: HttpRequest, **kwargs: Any) -> AccessTokenInfo:
         # remove tenant_id and claims kwarg that could have been passed from credential's get_token method
         # tenant_id is already part of `request` at this point
         kwargs.pop("tenant_id", None)
@@ -75,3 +95,35 @@ class AadClient(AadClientBase):
         now = int(time.time())
         response = self._pipeline.run(request, retry_on_methods=self._POST, **kwargs)
         return self._process_response(response, now, enable_cae=enable_cae, **kwargs)
+
+    def _run_pipeline(self, request: HttpRequest, **kwargs) -> AccessTokenInfo:
+        """Run the pipeline with request coalescing to prevent sending duplicate requests.
+
+        :param request: The HTTP request to run.
+        :type request: HttpRequest
+        :return: The access token information.
+        :rtype: AccessTokenInfo
+        """
+        request_key = create_request_key(request)
+        is_leader = False
+        future = None
+
+        with self._request_lock:
+            future = self._pending_requests.get(request_key)
+            if future is None:
+                is_leader = True
+                future = Future()
+                self._pending_requests[request_key] = future
+
+        if is_leader:
+            try:
+                result = self._execute_pipeline_request(request, **kwargs)
+                future.set_result(result)
+            except Exception as ex:  # pylint: disable=broad-except
+                future.set_exception(ex)
+            finally:
+                with self._request_lock:
+                    if request_key in self._pending_requests:
+                        del self._pending_requests[request_key]
+        # Return the result/exception to all waiters
+        return future.result()
