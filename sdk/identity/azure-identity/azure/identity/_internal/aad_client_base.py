@@ -6,8 +6,11 @@ import abc
 import base64
 import json
 import time
+import os
+import logging
 from uuid import uuid4
 from typing import TYPE_CHECKING, List, Any, Iterable, Optional, Union, Dict, cast
+from urllib.parse import urlparse
 
 from msal import TokenCache
 
@@ -16,7 +19,9 @@ from azure.core.pipeline.policies import ContentDecodePolicy
 from azure.core.pipeline.transport import HttpRequest
 from azure.core.credentials import AccessTokenInfo
 from azure.core.exceptions import ClientAuthenticationError
-from .utils import get_default_authority, normalize_authority, resolve_tenant, get_regional_authority
+from .utils import get_default_authority, normalize_authority, resolve_tenant
+from .._constants import EnvironmentVariables, KnownAuthorities
+from .._enums import RegionalAuthority
 from .aadclient_certificate import AadClientCertificate
 from .._persistent_cache import _load_persistent_cache
 
@@ -31,6 +36,7 @@ if TYPE_CHECKING:
     TransportType = Union[AsyncHttpTransport, HttpTransport]
 
 JWT_BEARER_ASSERTION = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+_LOGGER = logging.getLogger(__name__)
 
 
 class AadClientBase(abc.ABC):  # pylint: disable=too-many-instance-attributes
@@ -48,7 +54,7 @@ class AadClientBase(abc.ABC):  # pylint: disable=too-many-instance-attributes
         **kwargs: Any
     ) -> None:
         self._authority = normalize_authority(authority) if authority else get_default_authority()
-        self._regional_authority = get_regional_authority(self._authority)
+        self._regional_authority = None
 
         self._tenant_id = tenant_id
         self._client_id = client_id
@@ -134,6 +140,32 @@ class AadClientBase(abc.ABC):  # pylint: disable=too-many-instance-attributes
     @abc.abstractmethod
     def _build_pipeline(self, **kwargs):
         pass
+
+    def get_regional_authority(self) -> Optional[str]:
+        # This is based on MSAL's regional authority logic.
+        regional_authority = os.environ.get(EnvironmentVariables.AZURE_REGIONAL_AUTHORITY_NAME) or \
+            os.environ.get("MSAL_FORCE_REGION") # For parity with credentials that rely on MSAL, we check this var too.
+        if not regional_authority:
+            return None
+
+        if regional_authority.lower() in [RegionalAuthority.AUTO_DISCOVER_REGION, "true"]:
+            # Attempt to discover the region from IMDS
+            discovered_region = self._discover_region()
+            if not discovered_region:
+                _LOGGER.warning("Failed to auto-discover region. Using the non-regional authority.")
+                return None
+            regional_authority = discovered_region
+
+        central_host = urlparse(self._authority).hostname
+        if not central_host:
+            return None
+
+        # This mirrors the regional authority logic in MSAL.
+        if central_host in ("login.microsoftonline.com", "login.microsoft.com", "login.windows.net", "sts.windows.net"):
+            regional_host = f"{regional_authority}.login.microsoft.com"
+        else:
+            regional_host = f"{regional_authority}.{central_host}"
+        return f"https://{regional_host}"
 
     def _process_response(self, response: PipelineResponse, request_time: int, **kwargs) -> AccessTokenInfo:
         content = response.context.get(

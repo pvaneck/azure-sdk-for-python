@@ -11,6 +11,7 @@ import msal
 from .msal_client import MsalClient
 from .utils import get_default_authority, normalize_authority, resolve_tenant, validate_tenant_id
 from .._constants import EnvironmentVariables
+from .._enums import RegionalAuthority
 from .._persistent_cache import _load_persistent_cache
 
 
@@ -37,7 +38,10 @@ class MsalCredential:  # pylint: disable=too-many-instance-attributes
         self._instance_discovery = None if disable_instance_discovery is None else not disable_instance_discovery
         self._authority = normalize_authority(authority) if authority else get_default_authority()
         self._regional_authority = os.environ.get(EnvironmentVariables.AZURE_REGIONAL_AUTHORITY_NAME)
-        if self._regional_authority and self._regional_authority.lower() in ["tryautodetect", "true"]:
+        if self._regional_authority and self._regional_authority.lower() in [
+            RegionalAuthority.AUTO_DISCOVER_REGION,
+            "true",
+        ]:
             self._regional_authority = msal.ConfidentialClientApplication.ATTEMPT_REGION_DISCOVERY
         self._tenant_id = tenant_id or "organizations"
         validate_tenant_id(self._tenant_id)

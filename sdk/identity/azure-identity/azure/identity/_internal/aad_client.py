@@ -3,6 +3,7 @@
 # Licensed under the MIT License.
 # ------------------------------------
 import time
+import logging
 from typing import Iterable, Union, Optional, Any
 
 from azure.core.credentials import AccessTokenInfo
@@ -11,6 +12,8 @@ from azure.core.pipeline.transport import HttpRequest
 from .aad_client_base import AadClientBase
 from .aadclient_certificate import AadClientCertificate
 from .pipeline import build_pipeline
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class AadClient(AadClientBase):
@@ -61,6 +64,29 @@ class AadClient(AadClientBase):
     ) -> AccessTokenInfo:
         # no need for an implementation, non-async OnBehalfOfCredential acquires tokens through MSAL
         raise NotImplementedError()
+
+    def _discover_region(self) -> Optional[str]:
+        """Attempt to discover the Azure region from IMDS.
+
+        :return: The region name if discovered, otherwise None.
+        :rtype: Optional[str]
+        """
+        try:
+            url = "http://169.254.169.254/metadata/instance/compute/location?format=text&api-version=2021-01-01"
+            request = HttpRequest("GET", url, headers={"Metadata": "true"})
+
+            response = self._pipeline.run(request)
+            region = response.http_response.text().strip()
+            if region:
+                _LOGGER.info("Discovered Azure region: %s", region)
+                return region
+            else:
+                _LOGGER.warning("IMDS returned empty region")
+                return None
+        except Exception as ex:  # pylint: disable=broad-except
+            _LOGGER.info("Failed to discover Azure region from IMDS: %s", ex)
+            return None
+
 
     def _build_pipeline(self, **kwargs: Any) -> Pipeline:
         return build_pipeline(**kwargs)

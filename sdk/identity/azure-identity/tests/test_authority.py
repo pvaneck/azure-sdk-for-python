@@ -104,7 +104,68 @@ def test_get_regional_authority():
     with patch.dict("os.environ", {EnvironmentVariables.AZURE_REGIONAL_AUTHORITY_NAME: "centralus"}, clear=True):
         assert get_regional_authority("localhost") is None
 
-    # Test with "tryautodetect" value for regional authority
+    # Test with "tryautodetect" value for regional authority - successful discovery
     with patch.dict("os.environ", {EnvironmentVariables.AZURE_REGIONAL_AUTHORITY_NAME: "tryautodetect"}, clear=True):
-        result = get_regional_authority("https://login.microsoftonline.com")
-        assert result is None
+        with patch("azure.identity._internal.utils._discover_region") as mock_discover:
+            mock_discover.return_value = "eastus"
+            result = get_regional_authority("https://login.microsoftonline.com")
+            assert result == "https://eastus.login.microsoft.com"
+            mock_discover.assert_called_once()
+
+    # Test with "tryautodetect" value for regional authority - failed discovery
+    with patch.dict("os.environ", {EnvironmentVariables.AZURE_REGIONAL_AUTHORITY_NAME: "tryautodetect"}, clear=True):
+        with patch("azure.identity._internal.utils._discover_region") as mock_discover:
+            mock_discover.return_value = None
+            result = get_regional_authority("https://login.microsoftonline.com")
+            assert result is None
+            mock_discover.assert_called_once()
+
+
+def test_discover_region():
+    """_discover_region should discover the region from IMDS"""
+    from azure.identity._internal.utils import _discover_region
+    from unittest.mock import Mock
+
+    # Test successful region discovery
+    with patch("azure.identity._internal.utils.RequestsTransport") as mock_transport_class:
+        mock_transport = Mock()
+        mock_transport_class.return_value = mock_transport
+
+        mock_response = Mock()
+        mock_response.text.return_value = "eastus2"
+        mock_transport.send.return_value = mock_response
+
+        region = _discover_region()
+        assert region == "eastus2"
+
+        # Verify the request was made correctly
+        call_args = mock_transport.send.call_args
+        request = call_args[0][0]
+        assert (
+            request.url
+            == "http://169.254.169.254/metadata/instance/compute/location?format=text&api-version=2021-01-01"
+        )
+        assert request.headers["Metadata"] == "true"
+        assert call_args[1]["connection_timeout"] == 2
+        assert call_args[1]["read_timeout"] == 2
+
+    # Test failed discovery - exception
+    with patch("azure.identity._internal.utils.RequestsTransport") as mock_transport_class:
+        mock_transport = Mock()
+        mock_transport_class.return_value = mock_transport
+        mock_transport.send.side_effect = Exception("Connection timeout")
+
+        region = _discover_region()
+        assert region is None
+
+    # Test failed discovery - empty response
+    with patch("azure.identity._internal.utils.RequestsTransport") as mock_transport_class:
+        mock_transport = Mock()
+        mock_transport_class.return_value = mock_transport
+
+        mock_response = Mock()
+        mock_response.text.return_value = ""
+        mock_transport.send.return_value = mock_response
+
+        region = _discover_region()
+        assert region is None
