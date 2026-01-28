@@ -3,9 +3,11 @@
 # Licensed under the MIT License.
 # ------------------------------------
 import abc
+import asyncio
 import logging
+import threading
 import time
-from typing import Any, Optional, Dict, Type
+from typing import Any, Optional, Dict, Type, Tuple
 from weakref import WeakValueDictionary
 
 from azure.core.credentials import AccessToken, AccessTokenInfo, TokenRequestOptions
@@ -16,12 +18,42 @@ from .utils import get_running_async_lock_class
 _LOGGER = logging.getLogger(__name__)
 
 
+def _get_current_context_id() -> int:
+    """Get a unique identifier for the current async context.
+
+    For asyncio, this returns the event loop ID.
+    For Trio, this returns the current Trio token ID (representing the Trio run context).
+    """
+    # Try asyncio first since it's more common
+    try:
+        return id(asyncio.get_running_loop())
+    except RuntimeError:
+        pass
+
+    # Try Trio - if we can get a current_trio_token, we're in Trio
+    try:
+        import trio
+
+        token = trio.lowlevel.current_trio_token()
+        return id(token)
+    except ImportError:
+        pass
+    except RuntimeError:
+        # Not running in a Trio context
+        pass
+
+    return 0
+
+
 class GetTokenMixin(abc.ABC):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._last_request_time = 0
 
-        self._global_lock: Any = None
-        self._active_locks: WeakValueDictionary[tuple, Any] = WeakValueDictionary()
+        # Thread lock to protect access to per-loop state
+        self._thread_lock = threading.Lock()
+        # Maps event loop/Trio context id -> (global_lock, active_locks WeakValueDict)
+        # Each event loop/Trio context gets its own set of locks since async locks are bound to their context
+        self._per_loop_state: Dict[int, Tuple[Any, WeakValueDictionary]] = {}
         self._lock_class_type: Optional[Type] = None
 
         # https://github.com/python/mypy/issues/5887
@@ -33,21 +65,45 @@ class GetTokenMixin(abc.ABC):
             self._lock_class_type = get_running_async_lock_class()
         return self._lock_class_type
 
+    def _get_loop_state(self, context_id: int) -> Tuple[Any, WeakValueDictionary]:
+        """Get or create lock state for the given event loop or Trio context.
+
+        This should be called while holding _thread_lock.
+        """
+        if context_id not in self._per_loop_state:
+            global_lock = self._lock_class()
+            active_locks: WeakValueDictionary = WeakValueDictionary()
+            self._per_loop_state[context_id] = (global_lock, active_locks)
+        return self._per_loop_state[context_id]
+
     async def _get_request_lock(self, lock_key: tuple) -> Any:
-        if self._global_lock is None:
-            self._global_lock = self._lock_class()
+        """Get or create a lock for the given key, specific to the current event loop or Trio context.
 
-        lock = self._active_locks.get(lock_key)
-        if lock is not None:
-            return lock
+        Each event loop/Trio context gets its own set of locks because async Lock objects are
+        bound to the context in which they were created.
+        """
+        context_id = _get_current_context_id()
 
-        async with self._global_lock:
-            # Double-check in case another coroutine created it while we waited
-            lock = self._active_locks.get(lock_key)
-            if lock is None:
-                lock = self._lock_class()
-                self._active_locks[lock_key] = lock
-            return lock
+        with self._thread_lock:
+            global_lock, active_locks = self._get_loop_state(context_id)
+
+            # Check for existing lock
+            lock = active_locks.get(lock_key)
+            if lock is not None:
+                return lock
+
+        # Need to create new lock - acquire global lock first (outside thread lock)
+        async with global_lock:
+            with self._thread_lock:
+                # Re-get state in case it was modified
+                _, active_locks = self._get_loop_state(context_id)
+
+                # Double-check in case another coroutine created it while we waited
+                lock = active_locks.get(lock_key)
+                if lock is None:
+                    lock = self._lock_class()
+                    active_locks[lock_key] = lock
+                return lock
 
     @abc.abstractmethod
     async def _acquire_token_silently(self, *scopes: str, **kwargs) -> Optional[AccessTokenInfo]:
@@ -207,14 +263,14 @@ class GetTokenMixin(abc.ABC):
 
     def __getstate__(self) -> Dict[str, Any]:
         state = self.__dict__.copy()
-        # Remove the non-picklable entries
-        del state["_global_lock"]
+        # Remove the non-picklable entries (locks and threading primitives)
+        del state["_thread_lock"]
+        del state["_per_loop_state"]
         del state["_lock_class_type"]
-        del state["_active_locks"]
         return state
 
     def __setstate__(self, state: Dict[str, Any]) -> None:
         self.__dict__.update(state)
-        self._active_locks = WeakValueDictionary()
-        self._global_lock = None
+        self._thread_lock = threading.Lock()
+        self._per_loop_state = {}
         self._lock_class_type = None
